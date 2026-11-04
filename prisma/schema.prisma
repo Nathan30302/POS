@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  CASHIER
+}
+
+enum SaleStatus {
+  COMPLETED
+}
+
+enum PaymentMethod {
+  CASH
+  AIRTEL
+  MTN
+  ZAMTEL
+}
+
+model Shop {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  users     User[]
+  products  Product[]
+  sales     Sale[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role
+  shopId       String
+  shop         Shop     @relation(fields: [shopId], references: [id])
+  sales        Sale[]
+  createdAt    DateTime @default(now())
+}
+
+model Product {
+  id           String     @id @default(cuid())
+  name         String
+  barcode      String
+  sku          String
+  price        Float
+  stockQty     Int
+  reorderLevel Int        @default(10)
+  category     String
+  imageUrl     String?
+  shopId       String
+  shop         Shop       @relation(fields: [shopId], references: [id])
+  saleLines    SaleLine[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([shopId, barcode])
+  @@unique([shopId, sku])
+}
+
+model Sale {
+  id        String      @id @default(cuid())
+  shopId    String
+  shop      Shop        @relation(fields: [shopId], references: [id])
+  cashierId String
+  cashier   User        @relation(fields: [cashierId], references: [id])
+  total     Float
+  status    SaleStatus  @default(COMPLETED)
+  createdAt DateTime    @default(now())
+  lines     SaleLine[]
+  payments  Payment[]
+}
+
+model SaleLine {
+  id        String  @id @default(cuid())
+  saleId    String
+  sale      Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  qty       Int
+  unitPrice Float
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  saleId    String
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  method    PaymentMethod
+  amount    Float
+  reference String?
+}

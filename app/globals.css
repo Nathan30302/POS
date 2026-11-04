@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #1c1917;
+  --ink-soft: #44403c;
+  --paper: #f7f3ee;
+  --paper-deep: #efe8df;
+  --card: #fffdf9;
+  --line: #e7ddd2;
+  --accent: #0f766e;
+  --accent-deep: #0d5f59;
+  --accent-soft: #ccfbf1;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --cash: #15803d;
+  --airtel: #ed1c24;
+  --mtn: #ffcc00;
+  --zamtel: #0066b3;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-paper-deep: var(--paper-deep);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-deep: var(--accent-deep);
+  --color-accent-soft: var(--accent-soft);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 35%),
+    radial-gradient(circle at top right, rgba(180, 83, 9, 0.06), transparent 28%),
+    linear-gradient(180deg, #fbf8f4 0%, var(--paper) 45%, #f3eee7 100%);
+  color: var(--ink);
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
