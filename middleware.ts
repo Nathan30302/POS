@@ -33,6 +33,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/products/") ||
     pathname === "/hero-counter.jpg" ||
+    pathname === "/login-stage.jpg" ||
     pathname === "/favicon.ico";
 
   if (pathname === "/" && session) {
@@ -62,6 +63,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|products/|hero-counter.jpg).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|products/|hero-counter.jpg|login-stage.jpg).*)",
   ],
 };
