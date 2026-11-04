@@ -1,36 +1,36 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #1c1917;
-  --ink-soft: #44403c;
-  --paper: #f7f3ee;
-  --paper-deep: #efe8df;
-  --card: #fffdf9;
-  --line: #e7ddd2;
-  --accent: #0f766e;
-  --accent-deep: #0d5f59;
-  --accent-soft: #ccfbf1;
-  --warn: #b45309;
+  --ink: #0b1220;
+  --ink-soft: #4b5568;
+  --mist: #f4f7f5;
+  --mist-deep: #e8eee9;
+  --card: #ffffff;
+  --line: #d7e0da;
+  --accent: #127a4c;
+  --accent-deep: #0b5c38;
+  --accent-soft: #d8f3e5;
+  --lime: #c8f542;
+  --warn: #c2410c;
   --danger: #b91c1c;
-  --cash: #15803d;
-  --airtel: #ed1c24;
-  --mtn: #ffcc00;
-  --zamtel: #0066b3;
+  --shadow: 0 28px 70px -36px rgba(11, 18, 32, 0.45);
 }
 
 @theme inline {
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
-  --color-paper: var(--paper);
-  --color-paper-deep: var(--paper-deep);
+  --color-mist: var(--mist);
+  --color-mist-deep: var(--mist-deep);
   --color-card: var(--card);
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-deep: var(--accent-deep);
   --color-accent-soft: var(--accent-soft);
+  --color-lime: var(--lime);
   --color-warn: var(--warn);
   --color-danger: var(--danger);
-  --font-sans: var(--font-display);
+  --font-sans: var(--font-body);
+  --font-display: var(--font-display);
   --font-mono: var(--font-mono);
 }
 
@@ -45,12 +45,19 @@ body {
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 35%),
-    radial-gradient(circle at top right, rgba(180, 83, 9, 0.06), transparent 28%),
-    linear-gradient(180deg, #fbf8f4 0%, var(--paper) 45%, #f3eee7 100%);
   color: var(--ink);
-  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  background:
+    radial-gradient(circle at 12% -10%, rgba(200, 245, 66, 0.18), transparent 34%),
+    radial-gradient(circle at 88% 0%, rgba(18, 122, 76, 0.12), transparent 32%),
+    linear-gradient(180deg, #fbfcfb 0%, var(--mist) 48%, #eef3ef 100%);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+.font-display {
+  font-family: var(--font-display), var(--font-body), sans-serif;
 }
 
 button,
@@ -61,5 +68,65 @@ textarea {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--lime);
+  color: var(--ink);
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-rise {
+  animation: rise-in 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.animate-rise-delay {
+  animation: rise-in 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.12s both;
+}
+
+.animate-rise-delay-2 {
+  animation: rise-in 0.85s cubic-bezier(0.22, 1, 0.36, 1) 0.22s both;
+}
+
+.animate-float {
+  animation: float-soft 5.5s ease-in-out infinite;
+}
+
+.hero-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(215, 224, 218, 0.9);
 }

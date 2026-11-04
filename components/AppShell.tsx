@@ -7,7 +7,6 @@ import {
   LogOut,
   Package,
   ShoppingCart,
-  Store,
 } from "lucide-react";
 
 type Props = {
@@ -42,19 +41,21 @@ export function AppShell({ children, user }: Props) {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-40 border-b border-line/80 bg-card/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
+      <header className="sticky top-0 z-40 border-b border-line/80 bg-card/85 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-accent text-white shadow-sm">
-              <Store className="h-5 w-5" />
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-ink font-display text-lg font-extrabold text-lime shadow-sm">
+              P
             </div>
             <div>
-              <p className="text-sm font-semibold tracking-wide text-ink">POS</p>
+              <p className="font-display text-base font-bold tracking-tight text-ink">
+                POS
+              </p>
               <p className="text-xs text-ink-soft">{user.shopName}</p>
             </div>
           </div>
 
-          <nav className="hidden items-center gap-1 md:flex">
+          <nav className="hidden items-center gap-1 rounded-full border border-line bg-mist/70 p-1 md:flex">
             {links.map((link) => {
               const active = pathname.startsWith(link.href);
               const Icon = link.icon;
@@ -62,10 +63,10 @@ export function AppShell({ children, user }: Props) {
                 <Link
                   key={link.href}
                   href={link.href}
-                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm transition ${
+                  className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition ${
                     active
-                      ? "bg-accent text-white"
-                      : "text-ink-soft hover:bg-paper-deep hover:text-ink"
+                      ? "bg-ink text-white shadow-sm"
+                      : "text-ink-soft hover:bg-white hover:text-ink"
                   }`}
                 >
                   <Icon className="h-4 w-4" />
@@ -77,14 +78,14 @@ export function AppShell({ children, user }: Props) {
 
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
-              <p className="text-sm font-medium text-ink">{user.name}</p>
-              <p className="text-xs uppercase tracking-wide text-ink-soft">
+              <p className="text-sm font-semibold text-ink">{user.name}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-accent">
                 {user.role.toLowerCase()}
               </p>
             </div>
             <button
               onClick={logout}
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-3 py-2 text-sm text-ink-soft transition hover:border-accent hover:text-accent"
+              className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-3.5 py-2 text-sm font-medium text-ink-soft transition hover:border-ink hover:text-ink"
             >
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">Logout</span>
@@ -92,7 +93,7 @@ export function AppShell({ children, user }: Props) {
           </div>
         </div>
 
-        <div className="flex gap-1 overflow-x-auto border-t border-line/60 px-4 py-2 md:hidden">
+        <div className="flex gap-1 overflow-x-auto px-4 pb-3 md:hidden">
           {links.map((link) => {
             const active = pathname.startsWith(link.href);
             const Icon = link.icon;
@@ -100,10 +101,8 @@ export function AppShell({ children, user }: Props) {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-sm ${
-                  active
-                    ? "bg-accent text-white"
-                    : "bg-paper-deep text-ink-soft"
+                className={`inline-flex shrink-0 items-center gap-2 rounded-full px-3.5 py-2 text-sm font-medium ${
+                  active ? "bg-ink text-white" : "bg-mist-deep text-ink-soft"
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -114,7 +113,7 @@ export function AppShell({ children, user }: Props) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6">{children}</main>
     </div>
   );
 }

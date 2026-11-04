@@ -13,12 +13,13 @@ No ZRA / tax gateway. No public storefront. Shop-only.
 
 ## What you can show
 
-1. Sign in as **cashier** → open the till
-2. Scan/search a barcode (try `6001234567001`) or tap a product photo
-3. Pay with **Cash**, **Airtel**, **MTN**, or **Zamtel**
-4. See the on-screen receipt; stock drops automatically
-5. Sign in as **owner** → dashboard (today’s cash vs mobile money, low stock)
-6. Open **Products** to edit price/stock or add items
+1. Open the **landing page** at `/` — full hero demo pitch
+2. Go to **Sign in** and pick Owner or Cashier
+3. As **cashier** → till: scan/search (`6001234567001`) or tap a product photo
+4. Pay with **Cash**, **Airtel**, **MTN**, or **Zamtel**
+5. See the on-screen receipt; stock drops automatically
+6. As **owner** → dashboard (today’s cash vs mobile money, low stock)
+7. Open **Products** to edit price/stock or add items
 
 ## Run locally
 
@@ -28,7 +29,7 @@ npm run db:setup
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000) for the landing page, then continue to login.
 
 ## Stack
 

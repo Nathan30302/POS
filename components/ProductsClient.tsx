@@ -132,13 +132,13 @@ export function ProductsClient({ initialProducts }: { initialProducts: Product[]
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search products…"
-            className="w-full rounded-2xl border border-line bg-card py-3 pl-11 pr-4 outline-none ring-accent/20 focus:ring-4"
+            className="w-full rounded-2xl border border-line bg-card py-3 pl-11 pr-4 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/15"
           />
         </div>
         <button
           type="button"
           onClick={openCreate}
-          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-accent px-4 py-3 font-medium text-white hover:bg-accent-deep"
+          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-4 py-3 font-semibold text-white hover:bg-black"
         >
           <Plus className="h-4 w-4" />
           Add product
@@ -148,7 +148,7 @@ export function ProductsClient({ initialProducts }: { initialProducts: Product[]
       <div className="overflow-hidden rounded-[1.75rem] border border-line bg-card">
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-paper-deep/70 text-ink-soft">
+            <thead className="bg-mist-deep/80 text-ink-soft">
               <tr>
                 <th className="px-4 py-3 font-medium">Product</th>
                 <th className="px-4 py-3 font-medium">SKU / Barcode</th>
@@ -164,7 +164,7 @@ export function ProductsClient({ initialProducts }: { initialProducts: Product[]
                   <tr key={product.id} className="border-t border-line">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="relative h-12 w-12 overflow-hidden rounded-xl bg-paper-deep">
+                        <div className="relative h-12 w-12 overflow-hidden rounded-xl bg-mist-deep">
                           {product.imageUrl ? (
                             <Image
                               src={product.imageUrl}
@@ -231,7 +231,7 @@ export function ProductsClient({ initialProducts }: { initialProducts: Product[]
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="rounded-full p-2 hover:bg-paper"
+                className="rounded-full p-2 hover:bg-mist"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -280,7 +280,7 @@ export function ProductsClient({ initialProducts }: { initialProducts: Product[]
             <button
               type="submit"
               disabled={busy}
-              className="mt-5 w-full rounded-2xl bg-accent py-3 font-medium text-white hover:bg-accent-deep disabled:opacity-60"
+              className="mt-5 w-full rounded-2xl bg-ink py-3 font-semibold text-white hover:bg-black disabled:opacity-60"
             >
               {busy ? "Saving..." : "Save product"}
             </button>

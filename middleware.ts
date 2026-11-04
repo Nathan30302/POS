@@ -28,15 +28,14 @@ export async function middleware(request: NextRequest) {
   const session = await readSession(request);
 
   const isPublic =
+    pathname === "/" ||
     pathname === "/login" ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/products/") ||
+    pathname === "/hero-counter.jpg" ||
     pathname === "/favicon.ico";
 
-  if (pathname === "/") {
-    if (!session) {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
+  if (pathname === "/" && session) {
     const dest = session.role === "OWNER" ? "/dashboard" : "/till";
     return NextResponse.redirect(new URL(dest, request.url));
   }
@@ -62,5 +61,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|products/).*)"],
+  matcher: [
+    "/((?!api|_next/static|_next/image|favicon.ico|products/|hero-counter.jpg).*)",
+  ],
 };

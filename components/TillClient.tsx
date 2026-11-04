@@ -196,7 +196,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Scan barcode or search name / SKU…"
-            className="w-full rounded-3xl border border-line bg-card py-4 pl-12 pr-4 text-lg shadow-sm outline-none ring-accent/20 focus:ring-4"
+            className="w-full rounded-[1.6rem] border border-line bg-card py-4 pl-12 pr-4 text-lg shadow-[var(--shadow)] outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/15"
           />
         </form>
 
@@ -210,9 +210,9 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
                 type="button"
                 disabled={out}
                 onClick={() => addToCart(product)}
-                className="group overflow-hidden rounded-3xl border border-line bg-card text-left shadow-sm transition hover:-translate-y-0.5 hover:border-accent hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50"
+                className="group overflow-hidden rounded-[1.5rem] border border-line bg-card text-left shadow-sm transition hover:-translate-y-1 hover:border-accent hover:shadow-[var(--shadow)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <div className="relative aspect-square bg-paper-deep">
+                <div className="relative aspect-square bg-mist-deep">
                   {product.imageUrl ? (
                     <Image
                       src={product.imageUrl}
@@ -253,11 +253,11 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
         </div>
       </section>
 
-      <aside className="h-fit rounded-[2rem] border border-line bg-card p-5 shadow-[0_24px_60px_-40px_rgba(28,25,23,0.5)] lg:sticky lg:top-24">
+      <aside className="h-fit rounded-[2rem] border border-line bg-card p-5 shadow-[var(--shadow)] lg:sticky lg:top-24">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShoppingBag className="h-5 w-5 text-accent" />
-            <h2 className="text-lg font-semibold">Cart</h2>
+            <h2 className="font-display text-lg font-bold">Cart</h2>
           </div>
           {cart.length ? (
             <button
@@ -272,7 +272,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
 
         <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
           {!cart.length ? (
-            <div className="rounded-3xl border border-dashed border-line bg-paper/60 px-4 py-10 text-center text-sm text-ink-soft">
+            <div className="rounded-3xl border border-dashed border-line bg-mist/80 px-4 py-10 text-center text-sm text-ink-soft">
               Scan or tap a product to start a sale
             </div>
           ) : (
@@ -281,7 +281,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
                 key={item.product.id}
                 className="flex gap-3 rounded-2xl border border-line bg-white p-3"
               >
-                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-paper-deep">
+                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-mist-deep">
                   {item.product.imageUrl ? (
                     <Image
                       src={item.product.imageUrl}
@@ -301,7 +301,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
                     <button
                       type="button"
                       onClick={() => updateQty(item.product.id, item.qty - 1)}
-                      className="rounded-lg border border-line p-1 hover:bg-paper"
+                      className="rounded-lg border border-line p-1 hover:bg-mist"
                     >
                       <Minus className="h-3.5 w-3.5" />
                     </button>
@@ -311,7 +311,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
                     <button
                       type="button"
                       onClick={() => updateQty(item.product.id, item.qty + 1)}
-                      className="rounded-lg border border-line p-1 hover:bg-paper"
+                      className="rounded-lg border border-line p-1 hover:bg-mist"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -341,7 +341,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
         <div className="mt-5 border-t border-line pt-4">
           <div className="mb-4 flex items-end justify-between">
             <span className="text-ink-soft">Total</span>
-            <span className="text-3xl font-semibold tracking-tight">
+            <span className="font-display text-3xl font-extrabold tracking-tight">
               {formatZMW(total)}
             </span>
           </div>
@@ -353,7 +353,7 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
               setPayOpen(true);
               setTendered(total ? String(total.toFixed(2)) : "");
             }}
-            className="w-full rounded-2xl bg-accent py-3.5 font-medium text-white transition hover:bg-accent-deep disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-2xl bg-ink py-3.5 font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
           >
             Charge {formatZMW(total)}
           </button>
@@ -368,13 +368,13 @@ export function TillClient({ initialProducts }: { initialProducts: Product[] }) 
               <button
                 type="button"
                 onClick={() => setPayOpen(false)}
-                className="rounded-full p-2 hover:bg-paper"
+                className="rounded-full p-2 hover:bg-mist"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <p className="mb-4 text-3xl font-semibold text-accent">
+            <p className="mb-4 font-display text-3xl font-extrabold text-accent">
               {formatZMW(total)}
             </p>
 

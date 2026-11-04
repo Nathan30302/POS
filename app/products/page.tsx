@@ -15,11 +15,15 @@ export default async function ProductsPage() {
 
   return (
     <AppShell user={session}>
-      <div className="mb-6">
-        <h1 className="text-3xl font-semibold tracking-tight">Products</h1>
+      <div className="mb-7">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">
+          Catalogue
+        </p>
+        <h1 className="font-display text-4xl font-extrabold tracking-tight">
+          Products
+        </h1>
         <p className="mt-1 text-ink-soft">
-          Catalogue for {session.shopName}. Add barcodes before items hit the
-          shelf.
+          {session.shopName} — add barcodes before items hit the shelf.
         </p>
       </div>
       <ProductsClient initialProducts={products} />
