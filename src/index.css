@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0f172a;
+  --ink-soft: #64748b;
+  --surface: #f8fafc;
+  --card: #ffffff;
+  --line: #e2e8f0;
+  --brand: #0f766e;
+  --brand-deep: #0d9488;
+  --brand-soft: #ccfbf1;
+  --warn: #d97706;
+  --danger: #dc2626;
+  --ok: #059669;
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-soft: var(--brand-soft);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --font-sans: "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #ccfbf1 0%, transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, #e2e8f0 0%, transparent 50%),
+    var(--surface);
+  font-family: var(--font-sans);
+}
+
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@media print {
+  aside,
+  .pointer-events-none.fixed {
+    display: none !important;
+  }
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* html5-qrcode: fill the frame so it doesn’t look like a black hole */
+.scanner-shell {
+  min-height: 280px;
+}
+
+.scanner-viewport {
+  width: 100%;
+  min-height: 280px;
+}
+
+.scanner-viewport video {
+  width: 100% !important;
+  height: 280px !important;
+  object-fit: cover !important;
+  border-radius: 0;
+  background: #0f172a;
+}
+
+.scanner-viewport img {
+  display: none !important;
+}
+
+#qr-shaded-region {
+  border-color: rgba(45, 212, 191, 0.85) !important;
+}
