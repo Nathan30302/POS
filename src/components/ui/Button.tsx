@@ -6,10 +6,10 @@ const styles: Record<Variant, string> = {
   primary:
     'bg-brand text-white hover:bg-brand-deep shadow-sm disabled:bg-brand/50',
   secondary:
-    'bg-white text-ink border border-line hover:bg-slate-50 disabled:opacity-50',
+    'bg-card text-ink border border-line hover:bg-brand-soft disabled:opacity-50',
   danger:
     'bg-danger text-white hover:bg-red-700 disabled:bg-danger/50',
-  ghost: 'bg-transparent text-ink-soft hover:bg-slate-100 disabled:opacity-50',
+  ghost: 'bg-transparent text-ink-soft hover:bg-brand-soft disabled:opacity-50',
 }
 
 type Props = ButtonHTMLAttributes<HTMLButtonElement> & {

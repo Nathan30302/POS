@@ -54,7 +54,7 @@ export function DashboardPage() {
           <Link to="/checkout">
             <Button type="button">
               <ShoppingCart className="h-4 w-4" />
-              Open till
+              Open Sell
             </Button>
           </Link>
           <Link to="/products">
@@ -179,7 +179,7 @@ export function DashboardPage() {
         </div>
         {recent.length === 0 ? (
           <p className="text-sm text-ink-soft">
-            No sales yet. Open the till and ring one up.
+            No sales yet. Open Sell and ring one up.
           </p>
         ) : (
           <ul className="divide-y divide-line">

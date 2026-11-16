@@ -8,7 +8,7 @@ import type {
   SaleWithItems,
 } from '@/types/database'
 
-const STORAGE_KEY = 'stationery-pos-v1'
+const STORAGE_KEY = 'nexora-local-v1'
 
 type DbShape = {
   products: Product[]

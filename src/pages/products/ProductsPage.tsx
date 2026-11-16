@@ -11,15 +11,15 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { useProducts } from '@/hooks/useProducts'
-import { useRole } from '@/hooks/useRole'
-import { localDb } from '@/lib/localDb'
+import { useAuth } from '@/context/AuthContext'
+import { api } from '@/lib/api'
 import { formatZMW } from '@/lib/money'
 import type { Product, ProductInput } from '@/types/database'
 import { PRODUCT_CATEGORIES } from '@/types/database'
 import { ProductForm } from './ProductForm'
 
 export function ProductsPage() {
-  const { isOwner } = useRole()
+  const { isOwnerLike: isOwner } = useAuth()
   const {
     products,
     loading,
@@ -89,7 +89,10 @@ export function ProductsPage() {
     setBusyReceive(true)
     setActionError('')
     try {
-      localDb.receiveStock(receiving.id, receiveQty)
+      await api(`/products/${receiving.id}/receive`, {
+        method: 'POST',
+        body: JSON.stringify({ quantity: receiveQty }),
+      })
       await refresh()
       setReceiving(null)
       setReceiveQty(10)
@@ -111,7 +114,7 @@ export function ProductsPage() {
             Products
           </h2>
           <p className="mt-1 text-sm text-ink-soft">
-            Manage stationery stock, barcodes, and prices for the till.
+            Manage stock, barcodes, and prices for the counter.
           </p>
         </div>
         {isOwner ? (
@@ -154,24 +157,6 @@ export function ProductsPage() {
           <Button type="button" variant="secondary" onClick={() => void refresh()}>
             Refresh
           </Button>
-          {isOwner ? (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                if (
-                  window.confirm(
-                    'Reset demo data? This restores the 20 sample products and clears sales.',
-                  )
-                ) {
-                  localDb.resetDemoData()
-                  void refresh()
-                }
-              }}
-            >
-              Reset demo
-            </Button>
-          ) : null}
         </div>
       </div>
 

@@ -14,7 +14,7 @@ import {
 } from '@/lib/sounds'
 
 /**
- * Full-screen phone scanner. Opens from QR on the till.
+ * Full-screen phone scanner. Opens from QR on the counter.
  * Sends each barcode to the laptop over PeerJS.
  */
 export function PhoneScannerPage() {
@@ -23,7 +23,7 @@ export function PhoneScannerPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const connRef = useRef<DataConnection | null>(null)
   const [link, setLink] = useState<'connecting' | 'ready' | 'error'>('connecting')
-  const [linkDetail, setLinkDetail] = useState('Connecting to till…')
+  const [linkDetail, setLinkDetail] = useState('Connecting to counter…')
   const [flash, setFlash] = useState('Point at a barcode')
   const [flashTone, setFlashTone] = useState<'ok' | 'idle' | 'error'>('idle')
 
@@ -50,7 +50,7 @@ export function PhoneScannerPage() {
       conn.on('open', () => {
         if (cancelled) return
         setLink('ready')
-        setLinkDetail('Linked to till — scan now')
+        setLinkDetail('Linked to counter — scan now')
         playLinkBeep()
         conn?.send({
           type: 'hello',
@@ -63,13 +63,13 @@ export function PhoneScannerPage() {
       conn.on('close', () => {
         if (cancelled) return
         setLink('error')
-        setLinkDetail('Disconnected from till. Re-open the QR.')
+        setLinkDetail('Disconnected from counter. Re-open the QR.')
       })
 
       conn.on('error', () => {
         if (cancelled) return
         setLink('error')
-        setLinkDetail('Could not stay linked. Re-scan the QR on the till.')
+        setLinkDetail('Could not stay linked. Re-scan the QR on the counter.')
       })
     })
 
@@ -112,7 +112,7 @@ export function PhoneScannerPage() {
         setFlashTone('ok')
       } else {
         playErrorBuzz()
-        setFlash('Not linked — re-open QR from till')
+        setFlash('Not linked — re-open QR from counter')
         setFlashTone('error')
       }
       window.setTimeout(() => {

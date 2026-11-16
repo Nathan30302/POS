@@ -1,6 +1,6 @@
 export type AppRole = 'owner' | 'staff'
 
-const ROLE_KEY = 'stationery-pos-role'
+const ROLE_KEY = 'nexora-role'
 
 export function getRole(): AppRole {
   const value = localStorage.getItem(ROLE_KEY)

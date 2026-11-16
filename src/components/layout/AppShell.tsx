@@ -30,7 +30,7 @@ export function AppShell() {
       <aside className="border-b border-line bg-card lg:border-b-0 lg:border-r">
         <div className="px-5 py-5">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
-            Stationery POS
+            NEXORA
           </p>
           <h1 className="mt-1 text-xl font-bold text-ink">Shop Counter</h1>
           <p className="mt-1 text-xs text-ink-soft">Local demo · fully offline</p>

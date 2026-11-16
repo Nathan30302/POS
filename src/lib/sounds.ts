@@ -1,4 +1,4 @@
-/** Punchy POS beeps via Web Audio (no sound files). */
+/** Punchy counter beeps via Web Audio (no sound files). */
 
 let ctx: AudioContext | null = null
 

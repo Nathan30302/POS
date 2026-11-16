@@ -8,7 +8,7 @@ export function createRoomCode() {
 }
 
 export function hostPeerId(roomCode: string) {
-  return `stationery-pos-${roomCode.toUpperCase()}`
+  return `nexora-sell-${roomCode.toUpperCase()}`
 }
 
 export function phoneScanUrl(roomCode: string, origin = window.location.origin) {

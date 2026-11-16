@@ -117,14 +117,14 @@ export function PhonePairModal({ onCode, onClose }: Props) {
         <p className="font-semibold text-brand">Use your phone as the scanner</p>
         <p className="mt-1 text-ink-soft">
           Phone cameras read barcodes much faster than most laptop webcams.
-          Keep this page open on the till; scan on the phone.
+          Keep this page open on the counter; scan on the phone.
         </p>
       </div>
 
       {localhostWarn ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           <strong>Important:</strong> You’re on <code>localhost</code>. On the
-          laptop, open the POS with your Wi‑Fi address first (e.g.{' '}
+          laptop, open NEXORA with your Wi‑Fi address first (e.g.{' '}
           <code>http://192.168.x.x:5173</code>), then open Connect phone again so
           the QR works on your phone.
         </div>
@@ -169,7 +169,7 @@ export function PhonePairModal({ onCode, onClose }: Props) {
       <ol className="list-decimal space-y-1 pl-5 text-sm text-ink-soft">
         <li>Phone and laptop on the same Wi‑Fi</li>
         <li>Open the phone camera and scan this QR (or open the link)</li>
-        <li>Allow camera on the phone — scan items; they appear on this till</li>
+        <li>Allow camera on the phone — scan items; they appear on this counter</li>
       </ol>
 
       <div className="flex justify-end">

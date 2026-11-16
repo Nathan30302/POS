@@ -1,0 +1,403 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum PlatformRole {
+  SUPER_ADMIN
+  SUPPORT
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  CANCELLED
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  BRANCH_MANAGER
+  ACCOUNTANT
+  INVENTORY_MANAGER
+  CASHIER
+  SALES
+  CUSTOM
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MTN_MOMO
+  AIRTEL_MONEY
+  ZAMTEL
+  BANK_TRANSFER
+  OTHER
+}
+
+enum SaleStatus {
+  COMPLETED
+  VOIDED
+  REFUNDED
+  PARKED
+}
+
+enum StockMovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  RETURN
+  WRITE_OFF
+}
+
+enum NotificationType {
+  LOW_STOCK
+  EXPIRY
+  RISK
+  SALES
+  PAYMENT
+  SYSTEM
+  INSIGHT
+}
+
+model PlatformUser {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  fullName     String
+  role         PlatformRole @default(SUPER_ADMIN)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Business {
+  id              String         @id @default(cuid())
+  name            String
+  slug            String         @unique
+  logoUrl         String?
+  description     String?
+  industry        String         @default("retail")
+  category        String?
+  address         String?
+  phone           String?
+  email           String?
+  currency        String         @default("ZMW")
+  taxEnabled      Boolean        @default(false)
+  taxRate         Float          @default(0)
+  timezone        String         @default("Africa/Lusaka")
+  status          BusinessStatus @default(TRIAL)
+  modulesJson     String         @default("{}")
+  settingsJson    String         @default("{}")
+  receiptJson     String         @default("{}")
+  plan            String         @default("starter")
+  trialEndsAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  branches     Branch[]
+  memberships  Membership[]
+  products     Product[]
+  categories   Category[]
+  customers    Customer[]
+  suppliers    Supplier[]
+  sales        Sale[]
+  expenses     Expense[]
+  stockMoves   StockMovement[]
+  notifications Notification[]
+  auditLogs    AuditLog[]
+  insights     BusinessInsight[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Branch {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  code       String?
+  address    String?
+  phone      String?
+  isMain     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sales    Sale[]
+  memberships Membership[]
+
+  @@index([businessId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  phone        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+  sales       Sale[]        @relation("SoldBy")
+  auditLogs   AuditLog[]
+}
+
+model Membership {
+  id          String         @id @default(cuid())
+  businessId  String
+  userId      String
+  branchId    String?
+  role        MembershipRole @default(CASHIER)
+  permissions String         @default("[]")
+  active      Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branchId], references: [id])
+
+  @@unique([businessId, userId])
+  @@index([businessId])
+}
+
+model Category {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  parentId   String?
+  createdAt  DateTime @default(now())
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+model Product {
+  id                String   @id @default(cuid())
+  businessId        String
+  categoryId        String?
+  name              String
+  sku               String?
+  barcode           String?
+  description       String?
+  costPrice         Float    @default(0)
+  sellingPrice      Float
+  stockQuantity     Int      @default(0)
+  lowStockThreshold Int      @default(10)
+  trackExpiry       Boolean  @default(false)
+  expiryDate        DateTime?
+  imageUrl          String?
+  active            Boolean  @default(true)
+  variantsJson      String   @default("[]")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category   Category?       @relation(fields: [categoryId], references: [id])
+  saleItems  SaleItem[]
+  stockMoves StockMovement[]
+  poItems    PurchaseOrderItem[]
+
+  @@unique([businessId, barcode])
+  @@unique([businessId, sku])
+  @@index([businessId])
+  @@index([businessId, name])
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  businessId  String
+  fullName    String
+  phone       String?
+  email       String?
+  creditLimit Float    @default(0)
+  balance     Float    @default(0)
+  loyaltyPts  Int      @default(0)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sales    Sale[]
+
+  @@index([businessId])
+}
+
+model Supplier {
+  id         String   @id @default(cuid())
+  businessId String
+  name       String
+  phone      String?
+  email      String?
+  address    String?
+  balance    Float    @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business       Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
+
+  @@index([businessId])
+}
+
+model Sale {
+  id            String        @id @default(cuid())
+  businessId    String
+  branchId      String?
+  customerId    String?
+  soldById      String?
+  status        SaleStatus    @default(COMPLETED)
+  subtotal      Float
+  discount      Float         @default(0)
+  tax           Float         @default(0)
+  total         Float
+  paymentMethod PaymentMethod
+  paymentJson   String        @default("[]")
+  notes         String?
+  receiptNo     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?    @relation(fields: [branchId], references: [id])
+  customer Customer?  @relation(fields: [customerId], references: [id])
+  soldBy   User?      @relation("SoldBy", fields: [soldById], references: [id])
+  items    SaleItem[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+}
+
+model SaleItem {
+  id          String @id @default(cuid())
+  saleId      String
+  productId   String
+  productName String
+  quantity    Int
+  unitPrice   Float
+  lineTotal   Float
+  costPrice   Float  @default(0)
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([saleId])
+}
+
+model StockMovement {
+  id          String            @id @default(cuid())
+  businessId  String
+  productId   String
+  type        StockMovementType
+  quantity    Int
+  note        String?
+  referenceId String?
+  createdAt   DateTime          @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([businessId, createdAt])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  businessId  String
+  category    String
+  amount      Float
+  note        String?
+  spentAt     DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, spentAt])
+}
+
+model PurchaseOrder {
+  id         String   @id @default(cuid())
+  businessId String
+  supplierId String
+  status     String   @default("DRAFT")
+  total      Float    @default(0)
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  items    PurchaseOrderItem[]
+
+  @@index([businessId])
+}
+
+model PurchaseOrderItem {
+  id              String @id @default(cuid())
+  purchaseOrderId String
+  productId       String
+  quantity        Int
+  unitCost        Float
+  lineTotal       Float
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id])
+}
+
+model Notification {
+  id         String           @id @default(cuid())
+  businessId String
+  type       NotificationType
+  title      String
+  body       String
+  read       Boolean          @default(false)
+  metaJson   String           @default("{}")
+  createdAt  DateTime         @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, read])
+}
+
+model BusinessInsight {
+  id         String   @id @default(cuid())
+  businessId String
+  kind       String
+  title      String
+  summary    String
+  impact     String?
+  action     String?
+  severity   String   @default("info")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, active])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  businessId String?
+  userId     String?
+  action     String
+  entity     String?
+  entityId   String?
+  metaJson   String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?     @relation(fields: [userId], references: [id])
+
+  @@index([businessId, createdAt])
+}
