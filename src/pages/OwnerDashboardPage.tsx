@@ -6,9 +6,12 @@ import {
   ArrowRight,
   ArrowUpRight,
   BookOpen,
+  Flame,
+  Lightbulb,
   Minus,
   Sparkles,
   Store,
+  Target,
   TrendingUp,
   Users,
   Wallet,
@@ -109,6 +112,13 @@ const toneStyles: Record<string, string> = {
   risk: 'border-amber-500/30 bg-amber-500/10',
   focus: 'border-royal/25 bg-royal/10',
 }
+
+const toneIcons = {
+  growth: TrendingUp,
+  win: Flame,
+  risk: AlertTriangle,
+  focus: Lightbulb,
+} as const
 
 export function OwnerDashboardPage() {
   const [data, setData] = useState<DashboardPayload | null>(null)
@@ -259,20 +269,26 @@ export function OwnerDashboardPage() {
             <Delta value={summary.revenueMom} />
           </div>
           <div className="flex h-44 items-end gap-2 sm:gap-3">
-            {data.months.map((m) => (
-              <div key={m.key} className="flex flex-1 flex-col items-center gap-2">
+            {data.months.map((m) => {
+              const pct = Math.max(8, Math.round((m.revenue / maxMonthRev) * 100))
+              return (
                 <div
-                  className="w-full rounded-t-xl bg-gradient-to-t from-royal to-teal transition-all"
-                  style={{
-                    height: `${Math.max(10, (m.revenue / maxMonthRev) * 100)}%`,
-                  }}
-                  title={`${m.label}: ${formatZMW(m.revenue)}`}
-                />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-                  {m.label}
-                </span>
-              </div>
-            ))}
+                  key={m.key}
+                  className="flex h-full min-w-0 flex-1 flex-col justify-end gap-2"
+                >
+                  <div className="relative flex min-h-0 flex-1 items-end">
+                    <div
+                      className="w-full rounded-t-xl bg-gradient-to-t from-royal to-teal shadow-sm shadow-royal/20"
+                      style={{ height: `${pct}%` }}
+                      title={`${m.label}: ${formatZMW(m.revenue)}`}
+                    />
+                  </div>
+                  <span className="truncate text-center text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+                    {m.label}
+                  </span>
+                </div>
+              )
+            })}
           </div>
         </section>
 
@@ -287,22 +303,33 @@ export function OwnerDashboardPage() {
             </p>
           </div>
           <ul className="max-h-[280px] space-y-0 overflow-y-auto">
-            {data.journal.map((entry) => (
-              <li
-                key={entry.id}
-                className={`border-b border-line px-5 py-4 last:border-b-0 ${toneStyles[entry.tone] || ''}`}
-              >
-                <p className="text-sm font-semibold text-ink">{entry.title}</p>
-                <p className="mt-1 text-xs leading-relaxed text-ink-soft">
-                  {entry.body}
-                </p>
-                {entry.action ? (
-                  <p className="mt-2 text-xs font-semibold text-royal">
-                    → {entry.action}
-                  </p>
-                ) : null}
-              </li>
-            ))}
+            {data.journal.map((entry) => {
+              const Icon = toneIcons[entry.tone] || Lightbulb
+              return (
+                <li
+                  key={entry.id}
+                  className={`border-b border-line px-5 py-4 last:border-b-0 ${toneStyles[entry.tone] || ''}`}
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-card/80 text-royal">
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-ink">{entry.title}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-ink-soft">
+                        {entry.body}
+                      </p>
+                      {entry.action ? (
+                        <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-royal">
+                          <Target className="h-3 w-3" />
+                          {entry.action}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </section>
       </div>

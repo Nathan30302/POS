@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Download, Eye, Search } from 'lucide-react'
+import { PageHero } from '@/components/PageHero'
 import { SaleReceiptPanel } from '@/components/SaleReceiptPanel'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -112,23 +113,31 @@ export function SalesPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-royal">
-            Ledger
-          </p>
-          <h2 className="nx-page-title mt-1">Sales history</h2>
-        </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="secondary" onClick={() => void refresh()}>
-            Refresh
-          </Button>
-          <Button type="button" onClick={exportCsv} disabled={!filtered.length}>
-            <Download className="h-4 w-4" />
-            Export CSV
-          </Button>
-        </div>
-      </div>
+      <PageHero
+        eyebrow="Ledger · history"
+        title="Sales history"
+        subtitle="Review completed sales, void when needed, and export for your books."
+        actions={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void refresh()}
+            >
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              className="bg-[#3563E9] hover:bg-[#2f58d4]"
+              onClick={exportCsv}
+              disabled={!filtered.length}
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
+          </>
+        }
+      />
 
       {error ? (
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">{error}</p>

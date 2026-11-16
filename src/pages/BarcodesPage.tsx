@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { BarcodeLabel } from '@/components/BarcodeLabel'
+import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { useProducts } from '@/hooks/useProducts'
 
@@ -13,24 +14,20 @@ export function BarcodesPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
-            Labels
-          </p>
-          <h2 className="mt-1 text-3xl font-bold tracking-tight text-ink">
-            Printable barcodes
-          </h2>
-          <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            Print this page, stick codes on products, then scan them at Checkout.
-            Phone cameras usually beat laptop webcams. A USB barcode gun is
-            fastest of all.
-          </p>
-        </div>
-        <Button type="button" onClick={() => window.print()}>
-          Print sheet
-        </Button>
-      </div>
+      <PageHero
+        eyebrow="Labels · print"
+        title="Printable barcodes"
+        subtitle="Print this page, stick codes on products, then scan them at the counter. Phone cameras usually beat laptop webcams."
+        actions={
+          <Button
+            type="button"
+            className="bg-[#3563E9] hover:bg-[#2f58d4]"
+            onClick={() => window.print()}
+          >
+            Print sheet
+          </Button>
+        }
+      />
 
       {loading ? (
         <p className="text-sm text-ink-soft">Loading…</p>

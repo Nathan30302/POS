@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Plus, Search, Trash2, Users } from 'lucide-react'
+import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { api } from '@/lib/api'
 import { formatZMW } from '@/lib/money'
@@ -100,21 +101,21 @@ export function CustomersPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-royal">
-            Relationships
-          </p>
-          <h2 className="nx-page-title mt-1 font-display">Customers</h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Profiles, loyalty, and credit — the people side of your shop OS.
-          </p>
-        </div>
-        <Button type="button" onClick={() => setOpen((v) => !v)}>
-          <Plus className="h-4 w-4" />
-          {open ? 'Close' : 'Add customer'}
-        </Button>
-      </div>
+      <PageHero
+        eyebrow="Relationships · CRM"
+        title="Customers"
+        subtitle="Profiles, loyalty, and credit — the people side of your shop OS."
+        actions={
+          <Button
+            type="button"
+            className="bg-[#3563E9] hover:bg-[#2f58d4]"
+            onClick={() => setOpen((v) => !v)}
+          >
+            <Plus className="h-4 w-4" />
+            {open ? 'Close' : 'Add customer'}
+          </Button>
+        }
+      />
 
       {error ? (
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">{error}</p>

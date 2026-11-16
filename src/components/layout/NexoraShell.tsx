@@ -5,6 +5,7 @@ import {
   LogOut,
   Moon,
   Receipt,
+  Settings,
   Shield,
   Sparkles,
   Store,
@@ -16,7 +17,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { LiveAmbient } from '@/components/LiveSkyScene'
 import { useAuth } from '@/context/AuthContext'
 import { hasPermission, type Permission } from '@/lib/permissions'
-import { applyTheme, getTheme, toggleTheme } from '@/lib/theme'
+import {
+  applyAllPreferences,
+  getAmbientEnabled,
+  getTheme,
+  toggleTheme,
+} from '@/lib/theme'
 
 const links: Array<{
   to: string
@@ -32,21 +38,38 @@ const links: Array<{
   { to: '/app/insights', label: 'Pulse', icon: Sparkles, permission: 'pulse' },
   { to: '/app/barcodes', label: 'Labels', icon: Boxes, permission: 'labels' },
   { to: '/app/team', label: 'Team', icon: Shield, permission: 'team' },
+  { to: '/app/settings', label: 'Settings', icon: Settings, permission: null },
 ]
 
 export function NexoraShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [theme, setTheme] = useState(getTheme())
+  const [ambientOn, setAmbientOn] = useState(getAmbientEnabled())
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
+    applyAllPreferences()
+    setAmbientOn(getAmbientEnabled())
+    setTheme(getTheme())
+  }, [])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000)
     return () => window.clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => {
+      setTheme(getTheme())
+      setAmbientOn(getAmbientEnabled())
+    }
+    window.addEventListener('storage', sync)
+    window.addEventListener('nexora-prefs', sync)
+    return () => {
+      window.removeEventListener('storage', sync)
+      window.removeEventListener('nexora-prefs', sync)
+    }
   }, [])
 
   const visibleLinks = useMemo(
@@ -59,12 +82,14 @@ export function NexoraShell() {
 
   return (
     <div className="relative isolate min-h-screen overflow-x-hidden bg-surface">
-      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-        <LiveAmbient />
-      </div>
+      {ambientOn ? (
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+          <LiveAmbient />
+        </div>
+      ) : null}
 
       <div className="relative z-10 min-h-screen lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="flex flex-col border-b border-line bg-card/90 backdrop-blur-xl lg:min-h-screen lg:border-b-0 lg:border-r">
+        <aside className="flex flex-col border-b border-line bg-card/95 backdrop-blur-xl lg:sticky lg:top-0 lg:max-h-screen lg:border-b-0 lg:border-r">
           <div className="px-5 py-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-royal to-teal text-xs font-bold text-white shadow-lg shadow-royal/30">

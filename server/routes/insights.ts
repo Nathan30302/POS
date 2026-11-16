@@ -21,9 +21,10 @@ insightsRouter.get('/pulse', async (req: AuthRequest, res) => {
   const startToday = new Date(now)
   startToday.setHours(0, 0, 0, 0)
   const start7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  const start14 = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)
   const start30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
 
-  const [sales7, sales30, products, customers] = await Promise.all([
+  const [sales7, sales14, sales30, products, customers] = await Promise.all([
     prisma.sale.findMany({
       where: {
         businessId,
@@ -32,6 +33,14 @@ insightsRouter.get('/pulse', async (req: AuthRequest, res) => {
       },
       include: { items: true },
       orderBy: { createdAt: 'asc' },
+    }),
+    prisma.sale.findMany({
+      where: {
+        businessId,
+        status: 'COMPLETED',
+        createdAt: { gte: start14 },
+      },
+      include: { items: { select: { quantity: true, productName: true } } },
     }),
     prisma.sale.findMany({
       where: {
@@ -106,13 +115,44 @@ insightsRouter.get('/pulse', async (req: AuthRequest, res) => {
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 5)
 
-  const lowStock = products.filter((p) => p.stockQuantity <= p.lowStockThreshold)
+  const recentMap = new Map<string, number>()
+  const priorMap = new Map<string, number>()
+  for (const sale of sales14) {
+    const bucket = sale.createdAt >= start7 ? recentMap : priorMap
+    for (const item of sale.items) {
+      bucket.set(
+        item.productName,
+        (bucket.get(item.productName) || 0) + item.quantity,
+      )
+    }
+  }
+  const movers = [...new Set([...recentMap.keys(), ...priorMap.keys()])].map(
+    (name) => {
+      const recentQty = recentMap.get(name) || 0
+      const priorQty = priorMap.get(name) || 0
+      const delta = recentQty - priorQty
+      const changePct =
+        priorQty === 0 ? (recentQty > 0 ? 100 : 0) : (delta / priorQty) * 100
+      return { name, recentQty, priorQty, delta, changePct: Number(changePct.toFixed(1)) }
+    },
+  )
+  const rising = [...movers].sort((a, b) => b.delta - a.delta).slice(0, 5)
+  const falling = [...movers]
+    .filter((m) => m.delta < 0 || (m.priorQty > 0 && m.recentQty === 0))
+    .sort((a, b) => a.delta - b.delta)
+    .slice(0, 5)
+
+  const lowStock = products
+    .filter((p) => p.stockQuantity <= p.lowStockThreshold)
+    .sort((a, b) => a.stockQuantity - b.stockQuantity)
+    .slice(0, 6)
   const inventoryValue = products.reduce(
     (s, p) => s + p.stockQuantity * p.costPrice,
     0,
   )
   const salesToday = sales7.filter((s) => s.createdAt >= startToday)
   const revenueToday = salesToday.reduce((s, sale) => s + sale.total, 0)
+  const tickets30 = sales30.length
 
   res.json({
     pulse: {
@@ -122,12 +162,18 @@ insightsRouter.get('/pulse', async (req: AuthRequest, res) => {
       profit30,
       margin30: revenue30 > 0 ? profit30 / revenue30 : 0,
       discount30,
+      avgTicket30: tickets30 > 0 ? revenue30 / tickets30 : 0,
+      tickets30,
       customers,
       productCount: products.length,
-      lowStockCount: lowStock.length,
+      lowStockCount: products.filter((p) => p.stockQuantity <= p.lowStockThreshold)
+        .length,
       inventoryValue,
       series7: [...dayMap.entries()].map(([date, v]) => ({ date, ...v })),
       topProducts,
+      rising,
+      falling,
+      lowStock,
       paymentBreakdown: payBreakdown,
       healthScore: Math.max(
         0,
@@ -141,6 +187,7 @@ insightsRouter.get('/pulse', async (req: AuthRequest, res) => {
           ),
         ),
       ),
+      generatedAt: new Date().toISOString(),
     },
   })
 })
@@ -217,8 +264,26 @@ insightsRouter.post('/ask', async (req: AuthRequest, res) => {
   } else if (/(inventory|stock value|catalogue)/.test(q)) {
     const value = products.reduce((s, p) => s + p.stockQuantity * p.costPrice, 0)
     answer = `Active catalogue: ${products.length} products. Estimated inventory cost value: ZMW ${value.toFixed(2)}.`
+  } else if (/(grow|improve|suggest|idea|advice)/.test(q)) {
+    const tip = top
+      ? `Protect stock on ${top[0]} and train staff to recommend it.`
+      : 'Focus on increasing tickets first — more completed sales beats guessing.'
+    const stockTip =
+      low.length > 0
+        ? ` Reorder ${low[0].name} before it stockouts.`
+        : ' Stock levels look fine right now.'
+    answer = `Growth focus: ${tip}${stockTip} Last 30 days delivered ZMW ${revenue.toFixed(2)} revenue and ZMW ${profit.toFixed(2)} gross profit.`
+  } else if (/(slow|less|weak|cooling)/.test(q)) {
+    const ranked = [...productMap.entries()].sort((a, b) => a[1] - b[1])
+    answer =
+      ranked.length > 0
+        ? `Weakest recent revenue products include ${ranked
+            .slice(0, 3)
+            .map(([name]) => name)
+            .join(', ')}. Bundle them with a top seller or run a short promo.`
+        : 'Not enough sales history yet to spot cooling products.'
   } else {
-    answer = `Quick pulse — last 30 days: ZMW ${revenue.toFixed(2)} revenue, ZMW ${profit.toFixed(2)} gross profit, ${sales.length} sales, ${low.length} low-stock SKUs, ${customers.length} customers. Try asking about profit, today's sales, top sellers, or low stock.`
+    answer = `Quick pulse — last 30 days: ZMW ${revenue.toFixed(2)} revenue, ZMW ${profit.toFixed(2)} gross profit, ${sales.length} sales, ${low.length} low-stock SKUs, ${customers.length} customers. Try asking about profit, growth ideas, top sellers, or low stock.`
   }
 
   res.json({ answer, generatedAt: new Date().toISOString() })

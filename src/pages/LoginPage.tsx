@@ -4,7 +4,7 @@ import { Moon, Sun } from 'lucide-react'
 import { RealBusinessVideo } from '@/components/RealBusinessVideo'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
-import { applyTheme, getTheme, toggleTheme } from '@/lib/theme'
+import { applyAllPreferences, getTheme, toggleTheme } from '@/lib/theme'
 
 export function LoginPage() {
   const { user, loading, login } = useAuth()
@@ -16,8 +16,8 @@ export function LoginPage() {
   const [theme, setTheme] = useState(getTheme())
 
   useEffect(() => {
-    applyTheme(theme)
-  }, [theme])
+    applyAllPreferences()
+  }, [])
 
   if (!loading && user) {
     return (

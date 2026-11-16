@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { KeyRound, Plus, Shield, UserPlus, Users } from 'lucide-react'
+import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
@@ -150,28 +151,24 @@ export function TeamPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-royal">
-            Access
-          </p>
-          <h2 className="nx-page-title mt-1 font-display">Team</h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Create logins for cashiers, salespeople, and managers — then set exactly what
-            each person can do.
-          </p>
-        </div>
-        <Button
-          type="button"
-          onClick={() => {
-            setOpen((v) => !v)
-            if (meta) applyRoleDefaults('CASHIER')
-          }}
-        >
-          <UserPlus className="h-4 w-4" />
-          {open ? 'Close' : 'Add staff'}
-        </Button>
-      </div>
+      <PageHero
+        eyebrow="Access · team"
+        title="Team"
+        subtitle="Create logins for cashiers, salespeople, and managers — then set exactly what each person can do."
+        actions={
+          <Button
+            type="button"
+            className="bg-[#3563E9] hover:bg-[#2f58d4]"
+            onClick={() => {
+              setOpen((v) => !v)
+              if (meta) applyRoleDefaults('CASHIER')
+            }}
+          >
+            <UserPlus className="h-4 w-4" />
+            {open ? 'Close' : 'Add staff'}
+          </Button>
+        }
+      />
 
       {error ? (
         <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">{error}</p>

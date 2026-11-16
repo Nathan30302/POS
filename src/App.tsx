@@ -15,6 +15,7 @@ import { InsightsPage } from '@/pages/InsightsPage'
 import { CustomersPage } from '@/pages/CustomersPage'
 import { OnboardingPage } from '@/pages/OnboardingPage'
 import { TeamPage } from '@/pages/TeamPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 
 function Guard({
   children,
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="insights" element={<InsightsPage />} />
         <Route path="barcodes" element={<BarcodesPage />} />
         <Route path="team" element={<TeamPage />} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="onboarding" element={<OnboardingPage />} />
       </Route>
 

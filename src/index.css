@@ -349,6 +349,27 @@
   animation: landing-float 13s ease-in-out infinite reverse;
 }
 
+html.ambient-off .live-ambient,
+html.ambient-off .interior-orb,
+html.ambient-off .interior-orb-delay {
+  display: none !important;
+}
+
+html.density-compact main {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+html.density-compact .nx-card {
+  border-radius: 12px;
+}
+
+html.density-compact .nx-page-title,
+html.density-compact .font-display.text-3xl,
+html.density-compact .font-display.text-4xl {
+  letter-spacing: -0.03em;
+}
+
 :root {
   --navy: #101b35;
   --royal: #3563e9;

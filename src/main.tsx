@@ -4,10 +4,10 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
 import { ToastProvider } from '@/components/ui/Toast'
 import { AuthProvider } from '@/context/AuthContext'
-import { applyTheme, getTheme } from '@/lib/theme'
+import { applyAllPreferences } from '@/lib/theme'
 import './index.css'
 
-applyTheme(getTheme())
+applyAllPreferences()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

@@ -7,6 +7,7 @@ import {
   Trash2,
   PackageOpen,
 } from 'lucide-react'
+import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
@@ -105,31 +106,26 @@ export function ProductsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand">
-            Catalogue
-          </p>
-          <h2 className="mt-1 text-3xl font-bold tracking-tight text-ink">
-            Products
-          </h2>
-          <p className="mt-1 text-sm text-ink-soft">
-            Manage stock, barcodes, and prices for the counter.
-          </p>
-        </div>
-        {isOwner ? (
-          <Button
-            type="button"
-            onClick={() => {
-              setEditing(null)
-              setEditorOpen(true)
-            }}
-          >
-            <PackagePlus className="h-4 w-4" />
-            Add product
-          </Button>
-        ) : null}
-      </div>
+      <PageHero
+        eyebrow="Inventory · catalogue"
+        title="Products"
+        subtitle="Manage stock, barcodes, and prices for the counter."
+        actions={
+          isOwner ? (
+            <Button
+              type="button"
+              className="bg-[#3563E9] hover:bg-[#2f58d4]"
+              onClick={() => {
+                setEditing(null)
+                setEditorOpen(true)
+              }}
+            >
+              <PackagePlus className="h-4 w-4" />
+              Add product
+            </Button>
+          ) : null
+        }
+      />
 
       <div className="grid gap-3 sm:grid-cols-[1fr_220px_auto]">
         <div className="relative">
