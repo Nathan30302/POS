@@ -30,6 +30,7 @@ import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
 import { formatZMW } from '@/lib/money'
+import { apiPaymentLabel } from '@/types/database'
 
 type Insight = {
   id: string
@@ -292,8 +293,8 @@ export function InsightsPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHero
         eyebrow="Pulse · growth intelligence"
-        title="Talk to your business"
-        subtitle="Symbols, signals, and suggestions from your live sales — so you know what to push, fix, and protect."
+        title="Ask your business"
+        subtitle="Live signals from real sales — what to push, restock, and protect before the week gets away from you."
         actions={
           <Button
             type="button"
@@ -574,7 +575,7 @@ export function InsightsPage() {
                       <div className="mb-2 flex items-center justify-between gap-2">
                         <span className="inline-flex items-center gap-2 text-sm text-ink">
                           <Icon className="h-4 w-4 text-royal" />
-                          {method.replaceAll('_', ' ')}
+                          {apiPaymentLabel(method)}
                         </span>
                         <strong>{formatZMW(amount)}</strong>
                       </div>

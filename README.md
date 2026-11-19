@@ -19,7 +19,7 @@ npm run db:seed
 npm run dev
 ```
 
-- Web: http://localhost:5173  
+- Web: https://localhost:5173 (HTTPS for phone cameras)  
 - API: http://localhost:4000/api/health  
 
 ### Demo logins
@@ -31,13 +31,33 @@ npm run dev
 | Business admin | admin@demo.shop | DemoAdmin1! |
 | Cashier | cashier@demo.shop | DemoCash1! |
 
+### Phone Sell (recommended)
+
+Staff sign in on a phone → **Sell** → Live scan / catalogue. No QR pairing.
+
+Live camera needs HTTPS. For shop Wi‑Fi without browser “Not private” warnings:
+
+```bash
+./scripts/setup-lan-https.sh   # mkcert — once
+npm run dev
+```
+
+Named Cloudflare tunnel (stable hostname — not trycloudflare):
+
+```bash
+./scripts/named-tunnel.sh
+```
+
+Full steps: **[PHONE-SETUP.md](./PHONE-SETUP.md)**.
+
 ## What’s working now
 
 - Multi-tenant data model + JWT auth
 - Platform super admin (register businesses + owner accounts)
 - Business Team: create staff logins, roles, permissions, password resets
 - Business login / dashboard (live revenue, stock, recent sales)
-- Sell / counter checkout against API (stock decrement)
+- Sell / counter checkout — fast scan-to-cart, optimistic stock, O(1) barcode index
+- Logged-in phone Sell (primary) + optional PeerJS “phone as gun”
 - Customers CRM (profiles, loyalty, credit limits)
 - Pulse analytics + ask-your-data intelligence
 - Inventory CRUD + receive stock
@@ -45,6 +65,12 @@ npm run dev
 - Insights engine + natural-language Q&A over tenant data
 - Onboarding endpoint + wizard page
 - Light / dark NEXORA branding
+
+## Payments (next)
+
+Today: Cash + MoMo **agent number** display (Settings → Mobile money).
+
+Recommended next step: **MTN MoMo Collection API sandbox** (Zambia / multi-country) — initiate request-to-pay, poll status, keep agent-number fallback when no API keys. Structure routes as `/api/payments/momo` with `pending | confirmed | failed` and a webhook callback URL for production.
 
 ## Roadmap
 
@@ -54,3 +80,4 @@ See `docs/NEXORA_IMPLEMENTATION_CHECKLIST.md` for remaining modules (CRM deep fe
 
 - Tax is configurable per business (`taxEnabled` defaults false).
 - Tenant isolation is enforced server-side via `businessId` on every business query.
+- Phone HTTPS / tunnels: see `PHONE-SETUP.md`.

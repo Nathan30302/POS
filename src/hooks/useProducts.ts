@@ -39,8 +39,8 @@ export function useProducts() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
     setError('')
     try {
       const data = await api<{ products: ApiProduct[] }>('/products')
@@ -48,7 +48,7 @@ export function useProducts() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load products')
     } finally {
-      setLoading(false)
+      if (!opts?.silent) setLoading(false)
     }
   }, [])
 
@@ -99,11 +99,31 @@ export function useProducts() {
     await refresh()
   }
 
+  /** Optimistic stock patch after a sale — no full catalogue reload. */
+  const applyStockDeltas = useCallback(
+    (deltas: Array<{ productId: string; delta: number }>) => {
+      if (!deltas.length) return
+      const map = new Map(deltas.map((d) => [d.productId, d.delta]))
+      setProducts((prev) =>
+        prev.map((p) => {
+          const delta = map.get(p.id)
+          if (delta == null) return p
+          return {
+            ...p,
+            stock_quantity: Math.max(0, p.stock_quantity + delta),
+          }
+        }),
+      )
+    },
+    [],
+  )
+
   return {
     products,
     loading,
     error,
     refresh,
+    applyStockDeltas,
     createProduct,
     updateProduct,
     deleteProduct,

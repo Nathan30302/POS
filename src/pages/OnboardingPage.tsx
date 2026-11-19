@@ -46,13 +46,27 @@ export function OnboardingPage() {
   }
 
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto max-w-xl space-y-4">
+      <div className="rounded-[24px] border border-line bg-[#0b1224] p-5 text-white">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-teal">
+          Welcome to NEXORA
+        </p>
+        <h2 className="font-display mt-2 text-3xl font-bold tracking-tight">
+          Set up your shop
+        </h2>
+        <p className="mt-2 text-sm text-slate-300">
+          Name the business once — Sell, Inventory, Team, and Pulse unlock from
+          here.
+        </p>
+      </div>
       <form onSubmit={onSubmit} className="nx-card space-y-4 p-6">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-royal">
-            Setup
+            Shop profile
           </p>
-          <h2 className="nx-page-title mt-1">Business onboarding</h2>
+          <h2 className="font-display mt-1 text-xl font-bold text-ink">
+            Basics
+          </h2>
         </div>
         <Input
           label="Business name"

@@ -25,7 +25,7 @@ export type ProductInput = {
   image_url: string
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'eft' | 'other'
+export type PaymentMethod = 'cash' | 'card' | 'mtn' | 'airtel' | 'other'
 
 export type Sale = {
   id: string
@@ -53,6 +53,11 @@ export type CartLine = {
   quantity: number
 }
 
+export type ReceiptTender = {
+  cashGiven: number | null
+  changeDue: number | null
+}
+
 export const PRODUCT_CATEGORIES = [
   'Writing',
   'Books',
@@ -68,7 +73,55 @@ export const PRODUCT_CATEGORIES = [
 
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: 'cash', label: 'Cash' },
+  { value: 'mtn', label: 'MTN MoMo' },
+  { value: 'airtel', label: 'Airtel Money' },
   { value: 'card', label: 'Card' },
-  { value: 'eft', label: 'EFT / Mobile money' },
   { value: 'other', label: 'Other' },
 ]
+
+export const PAYMENT_API: Record<PaymentMethod, string> = {
+  cash: 'CASH',
+  card: 'CARD',
+  mtn: 'MTN_MOMO',
+  airtel: 'AIRTEL_MONEY',
+  other: 'OTHER',
+}
+
+export function mapApiPayment(method: string): PaymentMethod {
+  switch (method) {
+    case 'CARD':
+      return 'card'
+    case 'MTN_MOMO':
+      return 'mtn'
+    case 'AIRTEL_MONEY':
+      return 'airtel'
+    case 'OTHER':
+    case 'ZAMTEL':
+    case 'BANK_TRANSFER':
+      return 'other'
+    case 'CASH':
+    default:
+      return 'cash'
+  }
+}
+
+export function paymentLabel(method: PaymentMethod) {
+  return PAYMENT_METHODS.find((m) => m.value === method)?.label || method
+}
+
+/** Friendly label for API enums (CASH, MTN_MOMO, …) or frontend keys. */
+export function apiPaymentLabel(method: string) {
+  const mapped = mapApiPayment(method)
+  if (
+    method === 'cash' ||
+    method === 'card' ||
+    method === 'mtn' ||
+    method === 'airtel' ||
+    method === 'other'
+  ) {
+    return paymentLabel(method)
+  }
+  if (method === 'BANK_TRANSFER') return 'Bank transfer'
+  if (method === 'ZAMTEL') return 'Zamtel'
+  return paymentLabel(mapped)
+}

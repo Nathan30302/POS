@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000/api'
+/** Same-origin `/api` so phones on Wi‑Fi work (Vite proxies to the API). */
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export type SessionUser = {
   id: string

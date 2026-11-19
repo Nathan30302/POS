@@ -12,10 +12,11 @@ export function PageHero({
   actions?: ReactNode
 }) {
   return (
-    <section className="relative overflow-hidden rounded-[24px] border border-line bg-[#0b1224] p-5 text-white sm:p-6">
+    <section className="relative overflow-hidden rounded-[24px] border border-line bg-[#0b1224] p-5 text-white shadow-lg shadow-black/10 sm:p-6">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute -right-6 top-0 h-32 w-32 rounded-full bg-royal/40 blur-3xl interior-orb" />
         <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-teal/30 blur-3xl interior-orb-delay" />
+        <div className="absolute inset-0 opacity-20 landing-grid" />
       </div>
       <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
@@ -32,7 +33,9 @@ export function PageHero({
             </p>
           ) : null}
         </div>
-        {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+        {actions ? (
+          <div className="flex flex-wrap gap-2 sm:justify-end">{actions}</div>
+        ) : null}
       </div>
     </section>
   )

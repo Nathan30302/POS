@@ -38,10 +38,10 @@ export function unlockAudio() {
   tone(40, 10, 0.0001, 'sine')
 }
 
-/** Sharp till “TING” — loud enough to hear across the counter */
+/** Sharp ShopRite-style till “TING” — instant and loud */
 export function playScanBeep() {
-  tone(1400, 45, 0.16, 'square')
-  window.setTimeout(() => tone(1900, 70, 0.14, 'square'), 40)
+  tone(1800, 40, 0.28, 'square')
+  window.setTimeout(() => tone(2400, 70, 0.22, 'square'), 32)
 }
 
 /** Bigger chime after payment */

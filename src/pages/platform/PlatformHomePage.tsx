@@ -82,9 +82,9 @@ export function PlatformHomePage() {
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-royal">
               NEXORA Platform
             </p>
-            <h1 className="font-display nx-page-title mt-1">Super admin</h1>
+            <h1 className="font-display nx-page-title mt-1">Multi-shop console</h1>
             <p className="text-sm text-ink-soft">
-              {user?.email} · create shops and owner accounts
+              {user?.email} · provision shops and owner accounts across tenants
             </p>
           </div>
           <Button

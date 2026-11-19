@@ -237,7 +237,8 @@ export const localDb = {
     const paymentBreakdown: Record<PaymentMethod, number> = {
       cash: 0,
       card: 0,
-      eft: 0,
+      mtn: 0,
+      airtel: 0,
       other: 0,
     }
     let total = 0

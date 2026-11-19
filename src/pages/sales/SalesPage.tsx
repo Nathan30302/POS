@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, Eye, Search } from 'lucide-react'
+import { Download, Eye, Receipt, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { SaleReceiptPanel } from '@/components/SaleReceiptPanel'
 import { Button } from '@/components/ui/Button'
@@ -10,7 +12,15 @@ import { api } from '@/lib/api'
 import { downloadCsv, salesToCsv } from '@/lib/csv'
 import { formatZMW } from '@/lib/money'
 import type { PaymentMethod, SaleWithItems } from '@/types/database'
-import { PAYMENT_METHODS } from '@/types/database'
+import {
+  mapApiPayment,
+  paymentLabel,
+  PAYMENT_METHODS,
+} from '@/types/database'
+import {
+  fetchShopProfile,
+  type ShopReceiptProfile,
+} from '@/lib/shopProfile'
 
 type ApiSale = {
   id: string
@@ -31,19 +41,12 @@ type ApiSale = {
   }>
 }
 
-function mapPayment(method: string): PaymentMethod {
-  if (method === 'CARD') return 'card'
-  if (method === 'OTHER') return 'other'
-  if (method === 'CASH') return 'cash'
-  return 'eft'
-}
-
 function mapSale(sale: ApiSale): SaleWithItems {
   return {
     id: sale.id,
     total: sale.total,
     discount: sale.discount,
-    payment_method: mapPayment(sale.paymentMethod),
+    payment_method: mapApiPayment(sale.paymentMethod),
     notes: sale.notes,
     created_at: sale.createdAt,
     items: sale.items.map((item) => ({
@@ -60,12 +63,15 @@ function mapSale(sale: ApiSale): SaleWithItems {
 
 export function SalesPage() {
   const { push } = useToast()
-  const { isOwnerLike } = useAuth()
+  const { can } = useAuth()
+  const canVoid = can('void_sales')
   const [sales, setSales] = useState<SaleWithItems[]>([])
   const [selected, setSelected] = useState<SaleWithItems | null>(null)
   const [query, setQuery] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentMethod>('all')
   const [error, setError] = useState('')
+  const [shop, setShop] = useState<ShopReceiptProfile | null>(null)
+  const [loading, setLoading] = useState(true)
 
   async function refresh() {
     const data = await api<{ sales: ApiSale[] }>('/sales')
@@ -73,9 +79,15 @@ export function SalesPage() {
   }
 
   useEffect(() => {
-    void refresh().catch((err) =>
-      setError(err instanceof Error ? err.message : 'Failed to load sales'),
-    )
+    setLoading(true)
+    void refresh()
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load sales'),
+      )
+      .finally(() => setLoading(false))
+    void fetchShopProfile()
+      .then(setShop)
+      .catch(() => undefined)
   }, [])
 
   const filtered = useMemo(() => {
@@ -114,9 +126,9 @@ export function SalesPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHero
-        eyebrow="Ledger · history"
-        title="Sales history"
-        subtitle="Review completed sales, void when needed, and export for your books."
+        eyebrow="Ledger · money trail"
+        title="Sales ledger"
+        subtitle="Every completed sale, receipts, voids, and CSV export for your books."
         actions={
           <>
             <Button
@@ -169,7 +181,10 @@ export function SalesPage() {
         </select>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-card">
+      <div className="nx-card overflow-hidden">
+        {loading ? (
+          <LoadingBlock label="Loading ledger…" />
+        ) : (
         <table className="min-w-full text-left text-sm">
           <thead className="bg-slate-50 text-ink-soft dark:bg-slate-900/40">
             <tr>
@@ -181,41 +196,72 @@ export function SalesPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((sale) => (
-              <tr key={sale.id} className="border-t border-line">
-                <td className="px-4 py-3 text-ink-soft">
-                  {new Date(sale.created_at).toLocaleString()}
-                </td>
-                <td className="px-4 py-3 font-mono text-xs">
-                  {sale.id.slice(0, 8).toUpperCase()}
-                </td>
-                <td className="px-4 py-3 capitalize">{sale.payment_method}</td>
-                <td className="px-4 py-3 font-semibold">
-                  {formatZMW(sale.total)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1 text-sm font-medium text-royal"
-                    onClick={() => setSelected(sale)}
-                  >
-                    <Eye className="h-4 w-4" />
-                    View
-                  </button>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="p-0">
+                  <EmptyState
+                    icon={Receipt}
+                    title={
+                      sales.length === 0
+                        ? 'Ledger is empty'
+                        : 'Nothing matches this filter'
+                    }
+                    body={
+                      sales.length === 0
+                        ? 'Complete a sale on Sell — receipts and voids land here.'
+                        : 'Clear search or switch payment filter to see more.'
+                    }
+                    action={
+                      sales.length === 0 ? (
+                        <Link to="/app/checkout">
+                          <Button type="button">Open Sell</Button>
+                        </Link>
+                      ) : null
+                    }
+                  />
                 </td>
               </tr>
-            ))}
+            ) : (
+              filtered.map((sale) => (
+                <tr key={sale.id} className="border-t border-line">
+                  <td className="px-4 py-3 text-ink-soft">
+                    {new Date(sale.created_at).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs">
+                    {sale.id.slice(0, 8).toUpperCase()}
+                  </td>
+                  <td className="px-4 py-3">
+                    {paymentLabel(sale.payment_method)}
+                  </td>
+                  <td className="px-4 py-3 font-semibold">
+                    {formatZMW(sale.total)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-sm font-medium text-royal"
+                      onClick={() => setSelected(sale)}
+                    >
+                      <Eye className="h-4 w-4" />
+                      View
+                    </button>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
+        )}
       </div>
 
       {selected ? (
         <Modal title="Sale details" onClose={() => setSelected(null)}>
           <SaleReceiptPanel
             sale={selected}
+            shop={shop ?? undefined}
             doneLabel="Close"
             onDone={() => setSelected(null)}
-            onVoid={isOwnerLike ? voidSelected : undefined}
+            onVoid={canVoid ? voidSelected : undefined}
           />
         </Modal>
       ) : null}

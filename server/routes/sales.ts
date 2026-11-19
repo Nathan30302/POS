@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { requireAuth, requireBusiness, type AuthedRequest } from '../middleware.js'
+import { effectivePermissions } from '../permissions.js'
 import { prisma } from '../prisma.js'
 
 export const salesRouter = Router()
@@ -148,7 +149,17 @@ salesRouter.post('/', async (req: AuthedRequest, res) => {
 salesRouter.post('/:id/void', async (req: AuthedRequest, res) => {
   const businessId = req.auth!.businessId!
   const role = req.auth!.role
-  if (!['OWNER', 'ADMIN', 'BRANCH_MANAGER'].includes(role || '')) {
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: req.auth!.sub,
+      businessId,
+      active: true,
+    },
+  })
+  const perms = effectivePermissions(role, membership?.permissions)
+  const allowed =
+    ['OWNER', 'ADMIN'].includes(role || '') || perms.includes('void_sales')
+  if (!allowed) {
     return res.status(403).json({ error: 'Not allowed to void sales' })
   }
 

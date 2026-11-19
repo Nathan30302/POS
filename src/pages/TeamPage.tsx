@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { KeyRound, Plus, Shield, UserPlus, Users } from 'lucide-react'
+import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
@@ -50,6 +52,7 @@ export function TeamPage() {
   const [resetPassword, setResetPassword] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   async function load() {
     const [list, roles] = await Promise.all([
@@ -61,10 +64,16 @@ export function TeamPage() {
   }
 
   useEffect(() => {
-    if (!isOwnerLike) return
-    void load().catch((err) =>
-      setError(err instanceof Error ? err.message : 'Failed to load team'),
-    )
+    if (!isOwnerLike) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    void load()
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load team'),
+      )
+      .finally(() => setLoading(false))
   }, [isOwnerLike])
 
   function applyRoleDefaults(role: string) {
@@ -139,12 +148,23 @@ export function TeamPage() {
 
   if (!isOwnerLike) {
     return (
-      <div className="nx-card mx-auto max-w-lg p-8 text-center">
-        <Shield className="mx-auto h-8 w-8 text-ink-soft" />
-        <h2 className="mt-3 font-display text-xl font-bold">Team access locked</h2>
-        <p className="mt-2 text-sm text-ink-soft">
-          Only the business owner or admin can create staff accounts and set permissions.
-        </p>
+      <div className="mx-auto max-w-lg space-y-4">
+        <PageHero
+          eyebrow="Access · people"
+          title="Team & permissions"
+          subtitle="Staff accounts are managed by owners and admins."
+        />
+        <div className="nx-card flex flex-col items-center px-6 py-12 text-center">
+          <Shield className="h-8 w-8 text-ink-soft" />
+          <h2 className="mt-3 font-display text-xl font-bold">Team access locked</h2>
+          <p className="mt-2 text-sm text-ink-soft">
+            Only the business owner or admin can create staff accounts and set
+            permissions.
+          </p>
+          <Link to="/app/checkout" className="mt-6">
+            <Button type="button">Back to Sell</Button>
+          </Link>
+        </div>
       </div>
     )
   }
@@ -152,9 +172,9 @@ export function TeamPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHero
-        eyebrow="Access · team"
-        title="Team"
-        subtitle="Create logins for cashiers, salespeople, and managers — then set exactly what each person can do."
+        eyebrow="Access · people"
+        title="Team & permissions"
+        subtitle="Create staff logins, assign roles, and lock each person to the exact tools they need."
         actions={
           <Button
             type="button"
@@ -258,11 +278,26 @@ export function TeamPage() {
       ) : null}
 
       <div className="nx-card overflow-hidden">
-        {members.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
-            <Users className="h-8 w-8 text-ink-soft" />
-            <p className="text-sm text-ink-soft">No team members yet.</p>
-          </div>
+        {loading ? (
+          <LoadingBlock label="Loading team…" />
+        ) : members.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title="No team members yet"
+            body="Add cashiers and managers with the exact permissions each person needs."
+            action={
+              <Button
+                type="button"
+                onClick={() => {
+                  setOpen(true)
+                  if (meta) applyRoleDefaults('CASHIER')
+                }}
+              >
+                <UserPlus className="h-4 w-4" />
+                Add staff
+              </Button>
+            }
+          />
         ) : (
           <ul className="divide-y divide-line">
             {members.map((m) => (

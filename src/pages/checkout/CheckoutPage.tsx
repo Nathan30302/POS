@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Eraser,
   Minus,
+  PackageOpen,
   Plus,
   ScanLine,
   Search,
@@ -9,27 +11,34 @@ import {
   Trash2,
 } from 'lucide-react'
 import { BarcodeScanner } from '@/components/BarcodeScanner'
-import { PhonePairModal } from '@/components/PhonePairModal'
+import { EmptyState } from '@/components/EmptyState'
+import { PhonePairPanel } from '@/components/PhonePairPanel'
 import { SaleReceiptPanel } from '@/components/SaleReceiptPanel'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
+import { useAuth } from '@/context/AuthContext'
 import { useProducts } from '@/hooks/useProducts'
 import { api } from '@/lib/api'
-import { findProductByCode } from '@/lib/findProduct'
+import { buildProductIndex, findProductByCode } from '@/lib/findProduct'
 import { formatZMW } from '@/lib/money'
+import type { ScanResult } from '@/lib/peerRoom'
 import {
   playErrorBuzz,
   playScanBeep,
   playSuccessChime,
   unlockAudio,
 } from '@/lib/sounds'
+import {
+  fetchShopProfile,
+  type ShopReceiptProfile,
+} from '@/lib/shopProfile'
 import type {
   CartLine,
   PaymentMethod,
   SaleWithItems,
 } from '@/types/database'
-import { PAYMENT_METHODS } from '@/types/database'
+import { PAYMENT_API, PAYMENT_METHODS, PRODUCT_CATEGORIES } from '@/types/database'
 
 type ScanStatus = {
   message: string
@@ -38,7 +47,9 @@ type ScanStatus = {
 
 export function CheckoutPage() {
   const { push } = useToast()
-  const { products, loading, refresh } = useProducts()
+  const { can } = useAuth()
+  const canDiscount = can('discounts')
+  const { products, loading, refresh, applyStockDeltas } = useProducts()
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
   const [discount, setDiscount] = useState(0)
@@ -46,8 +57,11 @@ export function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
   const [scanOpen, setScanOpen] = useState(false)
   const [phoneOpen, setPhoneOpen] = useState(false)
+  const [phoneStatus, setPhoneStatus] = useState<
+    'waiting' | 'connected' | 'error'
+  >('waiting')
   const [scanStatus, setScanStatus] = useState<ScanStatus>({
-    message: 'Ready to scan…',
+    message: 'Point at barcode',
     tone: 'idle',
   })
   const [flash, setFlash] = useState('')
@@ -55,8 +69,32 @@ export function CheckoutPage() {
   const [error, setError] = useState('')
   const [completed, setCompleted] = useState<SaleWithItems | null>(null)
   const [completedChange, setCompletedChange] = useState<number | null>(null)
+  const [completedCash, setCompletedCash] = useState<number | null>(null)
+  const [shop, setShop] = useState<ShopReceiptProfile | null>(null)
+  const [catalogueQuery, setCatalogueQuery] = useState('')
+  const [catalogueCategory, setCatalogueCategory] = useState('All')
+  const [lastCart, setLastCart] = useState<CartLine[]>([])
+  const [showPathTip, setShowPathTip] = useState(() => {
+    try {
+      return localStorage.getItem('nexora-sell-path-tip') !== '1'
+    } catch {
+      return true
+    }
+  })
+  const isPhone =
+    typeof navigator !== 'undefined' &&
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
   const barcodeTimerRef = useRef<number | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
+  const keepScanOpenRef = useRef(false)
+  const cartRef = useRef(cart)
+  cartRef.current = cart
+  const productsRef = useRef(products)
+  productsRef.current = products
+
+  const productIndex = useMemo(() => buildProductIndex(products), [products])
+  const productIndexRef = useRef(productIndex)
+  productIndexRef.current = productIndex
 
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -71,19 +109,71 @@ export function CheckoutPage() {
       .slice(0, 8)
   }, [products, query])
 
+  const cartItemCount = useMemo(
+    () => cart.reduce((n, line) => n + line.quantity, 0),
+    [cart],
+  )
+
+  const cartQtyById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const line of cart) map.set(line.product.id, line.quantity)
+    return map
+  }, [cart])
+
+  const catalogue = useMemo(() => {
+    const q = catalogueQuery.trim().toLowerCase()
+    return products.filter((p) => {
+      const matchesCategory =
+        catalogueCategory === 'All' || p.category === catalogueCategory
+      const matchesQuery =
+        !q ||
+        p.name.toLowerCase().includes(q) ||
+        (p.barcode ?? '').includes(q) ||
+        (p.sku ?? '').toLowerCase().includes(q)
+      return matchesCategory && matchesQuery
+    })
+  }, [products, catalogueQuery, catalogueCategory])
+
   const subtotal = cart.reduce(
     (sum, line) => sum + line.product.selling_price * line.quantity,
     0,
   )
-  const safeDiscount = Math.min(Math.max(0, discount), subtotal)
+  const safeDiscount = canDiscount
+    ? Math.min(Math.max(0, discount), subtotal)
+    : 0
   const total = subtotal - safeDiscount
   const cashValue = Number(cashReceived)
+  const needsCashTender =
+    paymentMethod === 'cash' ||
+    paymentMethod === 'mtn' ||
+    paymentMethod === 'airtel'
   const change =
-    paymentMethod === 'cash' && Number.isFinite(cashValue) && cashReceived !== ''
+    needsCashTender && Number.isFinite(cashValue) && cashReceived !== ''
       ? cashValue - total
       : null
 
+  const momoAgent =
+    paymentMethod === 'mtn'
+      ? {
+          network: 'MTN MoMo',
+          number: shop?.mtnAgentNumber,
+          code: shop?.mtnAgentCode,
+        }
+      : paymentMethod === 'airtel'
+        ? {
+            network: 'Airtel Money',
+            number: shop?.airtelAgentNumber,
+            code: shop?.airtelAgentCode,
+          }
+        : null
+
   const completeSaleRef = useRef<() => Promise<void>>(async () => undefined)
+
+  useEffect(() => {
+    void fetchShopProfile()
+      .then(setShop)
+      .catch(() => undefined)
+  }, [])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -102,39 +192,45 @@ export function CheckoutPage() {
   }, [])
 
   const addProduct = useCallback(
-    (productId: string, source: 'scan' | 'manual' = 'manual') => {
+    (productId: string, source: 'scan' | 'manual' = 'manual'): ScanResult => {
       setError('')
-      const product = products.find((p) => p.id === productId)
+      const product =
+        productIndexRef.current.byId.get(productId) ||
+        productsRef.current.find((p) => p.id === productId)
       if (!product) {
-        setError('Product not found')
-        push('Product not found', 'error')
+        const message = 'Product not found'
+        setError(message)
         if (source === 'scan') {
           playErrorBuzz()
-          setScanStatus({ message: 'Product not found', tone: 'error' })
+          setScanStatus({ message, tone: 'error' })
+        } else {
+          push(message, 'error')
         }
-        return false
+        return { ok: false, message }
       }
       if (product.stock_quantity <= 0) {
-        const msg = `${product.name} is out of stock`
-        setError(msg)
-        push(msg, 'error')
+        const message = `${product.name} is out of stock`
+        setError(message)
         if (source === 'scan') {
           playErrorBuzz()
-          setScanStatus({ message: msg, tone: 'error' })
+          setScanStatus({ message, tone: 'error' })
+        } else {
+          push(message, 'error')
         }
-        return false
+        return { ok: false, label: product.name, message }
       }
 
-      const existing = cart.find((line) => line.product.id === productId)
+      const existing = cartRef.current.find((line) => line.product.id === productId)
       if (existing && existing.quantity >= product.stock_quantity) {
-        const msg = `Only ${product.stock_quantity} in stock for ${product.name}`
-        setError(msg)
-        push(msg, 'error')
+        const message = `Only ${product.stock_quantity} left · ${product.name}`
+        setError(message)
         if (source === 'scan') {
           playErrorBuzz()
-          setScanStatus({ message: msg, tone: 'error' })
+          setScanStatus({ message, tone: 'error' })
+        } else {
+          push(message, 'error')
         }
-        return false
+        return { ok: false, label: product.name, message }
       }
 
       setCart((prev) => {
@@ -149,46 +245,49 @@ export function CheckoutPage() {
         return [...prev, { product, quantity: 1 }]
       })
 
+      unlockAudio()
       playScanBeep()
+      try {
+        navigator.vibrate?.(source === 'scan' ? 28 : 18)
+      } catch {
+        // ignore
+      }
       const label = `${product.name} · ${formatZMW(product.selling_price)}`
-      setFlash(`Added ${label}`)
-      window.setTimeout(() => setFlash(''), 1800)
+      const message = `+ ${label}`
+      setFlash(message)
+      window.setTimeout(() => setFlash(''), 900)
       if (source === 'scan') {
         setScanStatus({ message: `✓ ${label}`, tone: 'ok' })
       }
       setQuery('')
-      return true
+      return { ok: true, label: product.name, message }
     },
-    [cart, products, push],
+    [push],
   )
 
   const handleLookup = useCallback(
-    (raw: string, source: 'scan' | 'manual' = 'manual') => {
+    (raw: string, source: 'scan' | 'manual' = 'manual'): ScanResult => {
       const code = raw.trim()
-      if (!code) return
+      if (!code) return { ok: false, message: 'Empty code' }
 
-      if (source === 'scan') {
-        setScanStatus({ message: `Read ${code}…`, tone: 'idle' })
-      }
-
-      const product = findProductByCode(code, products)
+      const product = findProductByCode(code, productIndexRef.current)
       if (product) {
-        addProduct(product.id, source)
-        return
+        return addProduct(product.id, source)
       }
 
-      const msg = `Not in catalogue: ${code}`
-      setError(msg)
-      push(msg, 'error')
+      const message = `Not in catalogue: ${code}`
+      setError(message)
+      push(message, 'error')
       playErrorBuzz()
       if (source === 'scan') {
         setScanStatus({
-          message: `${msg} — add it under Products first`,
+          message: `${message} — add under Inventory first`,
           tone: 'error',
         })
       }
+      return { ok: false, message }
     },
-    [addProduct, products, push],
+    [addProduct, push],
   )
 
   function setQty(productId: string, quantity: number) {
@@ -210,10 +309,11 @@ export function CheckoutPage() {
       return
     }
     if (
-      paymentMethod === 'cash' &&
+      needsCashTender &&
       cashReceived !== '' &&
       Number.isFinite(cashValue) &&
-      cashValue < total
+      cashValue < total &&
+      paymentMethod === 'cash'
     ) {
       const msg = 'Cash received is less than the total'
       setError(msg)
@@ -223,12 +323,20 @@ export function CheckoutPage() {
     setBusy(true)
     setError('')
     try {
-      const paymentMap = {
-        cash: 'CASH',
-        card: 'CARD',
-        eft: 'MTN_MOMO',
-        other: 'OTHER',
-      } as const
+      const noteParts: string[] = []
+      if (cashReceived !== '' && Number.isFinite(cashValue)) {
+        noteParts.push(`Cash given: ${cashValue.toFixed(2)}`)
+      }
+      if (change !== null) {
+        noteParts.push(`Change: ${change.toFixed(2)}`)
+      }
+      if (momoAgent?.number) {
+        noteParts.push(`${momoAgent.network} agent: ${momoAgent.number}`)
+      }
+      if (momoAgent?.code) {
+        noteParts.push(`Agent code: ${momoAgent.code}`)
+      }
+
       const data = await api<{
         sale: {
           id: string
@@ -262,7 +370,8 @@ export function CheckoutPage() {
             quantity: line.quantity,
           })),
           discount: safeDiscount,
-          paymentMethod: paymentMap[paymentMethod],
+          paymentMethod: PAYMENT_API[paymentMethod],
+          notes: noteParts.length ? noteParts.join(' · ') : undefined,
         }),
       })
       const sale = data.sale
@@ -285,17 +394,29 @@ export function CheckoutPage() {
       }
       playSuccessChime()
       push(`Sale complete · ${formatZMW(mapped.total)}`, 'ok')
-      setCompletedChange(
-        paymentMethod === 'cash' && change !== null && change >= 0
-          ? change
-          : null,
+      setCompletedCash(
+        cashReceived !== '' && Number.isFinite(cashValue) ? cashValue : null,
       )
+      setCompletedChange(change !== null ? change : null)
       setCompleted(mapped)
+      setLastCart(cart.map((line) => ({ ...line })))
+      // Optimistic stock — no full catalogue reload (keeps Sell snappy)
+      applyStockDeltas(
+        cart.map((line) => ({
+          productId: line.product.id,
+          delta: -line.quantity,
+        })),
+      )
       setCart([])
       setDiscount(0)
       setCashReceived('')
       setPaymentMethod('cash')
-      await refresh()
+      // Background reconcile — don’t block the next customer
+      window.setTimeout(() => {
+        void refresh({ silent: true })
+      }, 2500)
+      // Keep the live camera session ready for the next customer
+      if (scanOpen) keepScanOpenRef.current = true
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sale failed'
       setError(msg)
@@ -318,7 +439,7 @@ export function CheckoutPage() {
   }
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+    <div className="mx-auto grid max-w-6xl gap-4 pb-24 sm:gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:pb-0">
       <section className="space-y-4">
         <div className="relative overflow-hidden rounded-[24px] border border-line bg-[#0b1224] p-5 text-white sm:p-6">
           <div className="pointer-events-none absolute inset-0">
@@ -328,19 +449,61 @@ export function CheckoutPage() {
           <div className="relative z-10">
             <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-teal">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              Sell · live counter
+              Sell · live floor
             </p>
             <h2 className="font-display mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-              Counter
+              Sell
             </h2>
             <p className="mt-2 max-w-xl text-sm text-slate-300">
-              Fastest: <strong className="text-white">Connect phone</strong> (phone
-              camera → this counter). Or USB gun into the box. Shortcuts:{' '}
-              <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F2</kbd> focus ·{' '}
-              <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">F4</kbd> complete sale
+              {isPhone
+                ? 'You’re signed in on this phone — tap products or open Camera. Sales save to the shop instantly.'
+                : 'Click the catalogue, open Webcam, or link a phone gun. Sales sync for the whole shop.'}
+              {!isPhone ? (
+                <>
+                  {' '}
+                  Shortcuts:{' '}
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
+                    F2
+                  </kbd>{' '}
+                  search ·{' '}
+                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
+                    F4
+                  </kbd>{' '}
+                  complete
+                </>
+              ) : null}
             </p>
           </div>
         </div>
+
+        {showPathTip ? (
+          <div className="rounded-2xl border border-teal/30 bg-teal/10 px-4 py-3 text-sm text-ink">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold text-ink">Best path for Sell</p>
+                <p className="mt-1 text-xs text-ink-soft">
+                  {isPhone
+                    ? 'Stay logged in on this phone → Live scan or tap catalogue → Complete. No QR pairing needed.'
+                    : 'Sign in on a shop phone and open Sell (recommended). QR “phone as gun” is optional for counter-only setups. HTTPS setup: see PHONE-SETUP.md.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-ink-soft hover:bg-card hover:text-ink"
+                onClick={() => {
+                  setShowPathTip(false)
+                  try {
+                    localStorage.setItem('nexora-sell-path-tip', '1')
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {flash ? (
           <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
@@ -349,9 +512,80 @@ export function CheckoutPage() {
         ) : null}
 
         <div className="nx-card border-royal/25 bg-gradient-to-br from-royal/10 via-card to-teal/10 p-4 sm:p-5">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-royal">
-            Barcode reader
-          </p>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
+              Add products
+            </p>
+            {phoneOpen && phoneStatus === 'connected' ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                Phone live
+              </span>
+            ) : null}
+          </div>
+
+          {isPhone ? (
+            <div className="mb-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-200">
+              <p className="font-semibold">Phone checkout mode</p>
+              <p className="mt-1 text-xs opacity-90">
+                No QR pairing needed — you’re logged in. Tap catalogue tiles or
+                Camera. Complete the sale here; the shop ledger updates for
+                everyone.
+              </p>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  unlockAudio()
+                  setPhoneOpen(true)
+                  setPhoneStatus('waiting')
+                }}
+                className={`mb-3 flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
+                  phoneOpen && phoneStatus === 'connected'
+                    ? 'border-emerald-500/40 bg-emerald-500/10'
+                    : 'border-royal/30 bg-royal/10 hover:bg-royal/15'
+                }`}
+              >
+                <span
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+                    phoneOpen && phoneStatus === 'connected'
+                      ? 'bg-emerald-500 text-white'
+                      : 'bg-royal text-white'
+                  }`}
+                >
+                  <Smartphone className="h-5 w-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-ink">
+                    {phoneOpen && phoneStatus === 'connected'
+                      ? 'Phone gun linked'
+                      : 'Phone as barcode gun (no login)'}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-soft">
+                    {phoneOpen && phoneStatus === 'connected'
+                      ? 'Keep scanning — items land in this laptop cart'
+                      : 'Optional · QR link · or just sign in on the phone and open Sell'}
+                  </span>
+                </span>
+              </button>
+
+              {phoneOpen ? (
+                <div className="mb-3 rounded-2xl border border-line bg-card p-4">
+                  <PhonePairPanel
+                    onScan={(code) => handleLookup(code, 'scan')}
+                    onClose={() => {
+                      setPhoneOpen(false)
+                      setPhoneStatus('waiting')
+                    }}
+                    onStatusChange={setPhoneStatus}
+                  />
+                </div>
+              ) : null}
+            </>
+          )}
+
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-soft" />
@@ -378,42 +612,43 @@ export function CheckoutPage() {
                     setQuery('')
                   }
                 }}
-                placeholder="Scan or type barcode here…"
+                placeholder={
+                  isPhone
+                    ? 'Type barcode or name…'
+                    : 'USB gun or type barcode / name…'
+                }
                 className="w-full rounded-2xl border border-line bg-card py-4 pl-12 pr-4 text-lg text-ink outline-none transition focus:border-royal focus:ring-4 focus:ring-royal/20"
-                autoFocus
+                autoFocus={!isPhone}
               />
             </div>
             <Button
               type="button"
-              className="rounded-2xl px-5 py-4"
-              onClick={() => {
-                unlockAudio()
-                setPhoneOpen(true)
-              }}
-            >
-              <Smartphone className="h-5 w-5" />
-              Phone
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="rounded-2xl px-5 py-4"
+              className={`rounded-2xl px-5 py-4 ${isPhone ? 'min-h-14 flex-1 bg-[#3563E9] text-base hover:bg-[#2f58d4] sm:flex-none' : ''}`}
+              variant={isPhone ? 'primary' : 'secondary'}
               onClick={() => {
                 unlockAudio()
                 setScanStatus({
-                  message: 'Hold barcode close to the camera…',
+                  message: 'Point at barcode',
                   tone: 'idle',
                 })
                 setScanOpen(true)
               }}
             >
               <ScanLine className="h-5 w-5" />
-              Webcam
+              {isPhone ? 'Live scan' : 'Webcam'}
             </Button>
           </div>
-          <p className="mt-2 text-xs text-ink-soft">
-            Demo: 6001001001002 blue pen · 6001001002001 notebook · 6001001001001 black pen
-          </p>
+          {scanStatus.tone !== 'idle' ? (
+            <div
+              className={`mt-3 rounded-xl border px-4 py-3 text-sm font-semibold ${
+                scanStatus.tone === 'ok'
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                  : 'border-red-500/30 bg-red-500/10 text-danger'
+              }`}
+            >
+              {scanStatus.message}
+            </div>
+          ) : null}
         </div>
 
         {query.trim() && suggestions.length > 0 ? (
@@ -447,36 +682,120 @@ export function CheckoutPage() {
         ) : null}
 
         <div className="nx-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="font-semibold text-ink">Quick picks</h3>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h3 className="font-semibold text-ink">Shop catalogue</h3>
+              <p className="mt-0.5 text-xs text-ink-soft">
+                Click (or tap) a product to add it — click again to add another.
+                Works with mouse or touchscreen.
+              </p>
+            </div>
             {loading ? (
               <span className="text-xs text-ink-soft">Loading…</span>
-            ) : null}
+            ) : (
+              <span className="text-xs text-ink-soft">
+                {catalogue.length} shown · {products.length} total
+              </span>
+            )}
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {products.slice(0, 9).map((product) => (
-              <button
-                key={product.id}
-                type="button"
-                onClick={() => addProduct(product.id)}
-                className="rounded-xl border border-line px-3 py-3 text-left transition hover:border-brand hover:bg-brand-soft/40 active:scale-[0.99]"
-              >
-                <p className="line-clamp-2 text-sm font-medium text-ink">
-                  {product.name}
-                </p>
-                <p className="mt-1 text-sm font-semibold text-brand">
-                  {formatZMW(product.selling_price)}
-                </p>
-              </button>
-            ))}
+
+          <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_180px]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
+              <input
+                value={catalogueQuery}
+                onChange={(e) => setCatalogueQuery(e.target.value)}
+                placeholder="Filter catalogue…"
+                className="w-full rounded-xl border border-line bg-surface py-2.5 pl-10 pr-3 text-sm outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
+              />
+            </div>
+            <select
+              value={catalogueCategory}
+              onChange={(e) => setCatalogueCategory(e.target.value)}
+              className="rounded-xl border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-royal"
+            >
+              <option value="All">All categories</option>
+              {PRODUCT_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
           </div>
+
+          {!loading && products.length === 0 ? (
+            <EmptyState
+              icon={PackageOpen}
+              title="No products yet"
+              body="Add stock in Inventory so staff can click products onto the cart."
+            />
+          ) : !loading && catalogue.length === 0 ? (
+            <EmptyState
+              icon={PackageOpen}
+              title="No matches"
+              body="Try another filter or category."
+            />
+          ) : (
+            <div className="max-h-[min(58vh,480px)] overflow-y-auto overscroll-contain pr-1">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {catalogue.map((product) => {
+                  const inCart = cartQtyById.get(product.id) || 0
+                  const low =
+                    product.stock_quantity <= product.low_stock_threshold
+                  return (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => addProduct(product.id)}
+                      className={`relative rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${
+                        inCart
+                          ? 'border-royal/40 bg-royal/10 hover:bg-royal/15'
+                          : 'border-line hover:border-brand hover:bg-brand-soft/40'
+                      }`}
+                    >
+                      {inCart > 0 ? (
+                        <span className="absolute right-2 top-2 inline-flex min-w-6 items-center justify-center rounded-full bg-royal px-1.5 py-0.5 text-[11px] font-bold text-white">
+                          {inCart}
+                        </span>
+                      ) : null}
+                      {product.image_url ? (
+                        <img
+                          src={product.image_url}
+                          alt=""
+                          className="mb-2 h-16 w-full rounded-lg object-cover bg-surface"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="mb-2 flex h-12 items-center justify-center rounded-lg bg-surface text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
+                          {product.category}
+                        </div>
+                      )}
+                      <p className="line-clamp-2 text-sm font-medium text-ink">
+                        {product.name}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-brand">
+                        {formatZMW(product.selling_price)}
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-ink-soft">
+                        Stock {product.stock_quantity}
+                        {low ? ' · low' : ''}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
       <section className="space-y-4 lg:sticky lg:top-6 lg:self-start">
         <div className="nx-card p-4 sm:p-5">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="font-display text-lg font-semibold text-ink">Cart</h3>
+            <h3 className="font-display text-lg font-semibold text-ink">
+              Cart
+              {cartItemCount ? ` · ${cartItemCount}` : ''}
+            </h3>
             {cart.length > 0 ? (
               <button
                 type="button"
@@ -490,9 +809,31 @@ export function CheckoutPage() {
           </div>
 
           {cart.length === 0 ? (
-            <p className="mt-6 text-sm text-ink-soft">
-              Cart is empty. Scan or search to add items.
-            </p>
+            <div className="mt-2 space-y-3">
+              <EmptyState
+                icon={Smartphone}
+                title="Ready for the next customer"
+                body={
+                  isPhone
+                    ? 'Tap Live scan or a catalogue tile. Sales save to the shop instantly.'
+                    : 'Tap catalogue, Webcam, USB scan, or optional phone gun.'
+                }
+              />
+              {lastCart.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full rounded-2xl"
+                  onClick={() => {
+                    setCart(lastCart.map((line) => ({ ...line })))
+                    push('Same as last — adjust qty if needed', 'info')
+                  }}
+                >
+                  Same as last · {lastCart.reduce((n, l) => n + l.quantity, 0)}{' '}
+                  items
+                </Button>
+              ) : null}
+            </div>
           ) : (
             <ul className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto pr-1">
               {cart.map((line) => (
@@ -558,17 +899,19 @@ export function CheckoutPage() {
               <span>Subtotal</span>
               <span>{formatZMW(subtotal)}</span>
             </div>
-            <label className="flex items-center justify-between gap-3">
-              <span className="text-ink-soft">Discount</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={discount}
-                onChange={(e) => setDiscount(Number(e.target.value))}
-                className="w-28 rounded-xl border border-line px-3 py-2 text-right outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
-              />
-            </label>
+            {canDiscount ? (
+              <label className="flex items-center justify-between gap-3">
+                <span className="text-ink-soft">Discount</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={discount}
+                  onChange={(e) => setDiscount(Number(e.target.value))}
+                  className="w-28 rounded-xl border border-line px-3 py-2 text-right outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
+                />
+              </label>
+            ) : null}
             <div className="flex justify-between text-lg font-bold text-ink">
               <span>Total</span>
               <span>{formatZMW(total)}</span>
@@ -577,7 +920,7 @@ export function CheckoutPage() {
 
           <div className="mt-4">
             <p className="mb-2 text-sm font-medium text-ink">Payment</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
               {PAYMENT_METHODS.map((method) => (
                 <button
                   key={method.value}
@@ -595,10 +938,44 @@ export function CheckoutPage() {
             </div>
           </div>
 
-          {paymentMethod === 'cash' ? (
+          {momoAgent ? (
+            <div className="mt-4 space-y-2 rounded-xl border border-royal/25 bg-royal/5 p-3 text-sm">
+              <p className="font-semibold text-ink">{momoAgent.network} agent</p>
+              <p className="text-xs text-ink-soft">
+                Customer sends money to your shop number, or withdraws cash and
+                you take cash at the counter.
+              </p>
+              <div className="rounded-lg bg-card px-3 py-2">
+                <p className="text-xs text-ink-soft">Shop MoMo number</p>
+                <p className="font-mono text-base font-bold text-ink">
+                  {momoAgent.number || 'Not set'}
+                </p>
+                {momoAgent.code ? (
+                  <p className="mt-1 text-xs text-ink-soft">
+                    Agent code:{' '}
+                    <span className="font-semibold text-ink">{momoAgent.code}</span>
+                  </p>
+                ) : null}
+                {!momoAgent.number ? (
+                  <Link
+                    to="/app/settings"
+                    className="mt-2 inline-block text-xs font-semibold text-royal hover:underline"
+                  >
+                    Add in Settings → Mobile money
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {needsCashTender ? (
             <div className="mt-4 space-y-2 rounded-xl bg-surface p-3">
               <label className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-ink-soft">Cash received</span>
+                <span className="text-ink-soft">
+                  {paymentMethod === 'cash'
+                    ? 'Cash received'
+                    : 'Cash handed over'}
+                </span>
                 <input
                   type="number"
                   min={0}
@@ -619,7 +996,7 @@ export function CheckoutPage() {
                 </p>
               ) : (
                 <p className="text-xs text-ink-soft">
-                  Optional — enter cash to calculate change.
+                  Optional — enter cash given to calculate change for the receipt.
                 </p>
               )}
             </div>
@@ -627,50 +1004,87 @@ export function CheckoutPage() {
 
           <Button
             type="button"
-            className="mt-5 w-full rounded-2xl py-3.5 text-base"
+            className="mt-5 hidden w-full rounded-2xl py-3.5 text-base lg:inline-flex"
             disabled={busy || cart.length === 0}
             onClick={() => void completeSale()}
           >
-            {busy ? 'Saving sale…' : `Complete sale · ${formatZMW(total)}`}
+            {busy
+              ? 'Recording sale…'
+              : cart.length === 0
+                ? 'Add items to sell'
+                : `Complete · ${formatZMW(total)}`}
           </Button>
         </div>
       </section>
 
-      {phoneOpen ? (
-        <Modal title="Connect phone scanner" onClose={() => setPhoneOpen(false)} wide>
-          <PhonePairModal
-            onCode={(code) => handleLookup(code, 'scan')}
-            onClose={() => setPhoneOpen(false)}
-          />
-        </Modal>
+      {/* Sticky Complete — above bottom nav on phones */}
+      {cart.length > 0 ? (
+        <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 border-t border-line bg-card/95 px-3 py-2.5 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl lg:hidden">
+          <div className="mx-auto flex max-w-lg items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs text-ink-soft">
+                {cartItemCount} item{cartItemCount === 1 ? '' : 's'}
+              </p>
+              <p className="font-display text-lg font-bold tabular-nums text-ink">
+                {formatZMW(total)}
+              </p>
+            </div>
+            <Button
+              type="button"
+              className="shrink-0 rounded-2xl px-5 py-3.5 text-base"
+              disabled={busy}
+              onClick={() => void completeSale()}
+            >
+              {busy ? 'Saving…' : 'Complete sale'}
+            </Button>
+          </div>
+        </div>
       ) : null}
 
-      {scanOpen ? (
-        <Modal title="Scan products" onClose={() => setScanOpen(false)} wide>
+      {scanOpen && !completed ? (
+        <Modal
+          title="Live scan"
+          onClose={() => {
+            keepScanOpenRef.current = false
+            setScanOpen(false)
+          }}
+          wide
+        >
           <BarcodeScanner
             continuous
             statusMessage={scanStatus.message}
             statusTone={scanStatus.tone}
-            onScan={(code) => handleLookup(code, 'scan')}
-            onClose={() => setScanOpen(false)}
+            onScan={(code) => {
+              handleLookup(code, 'scan')
+            }}
+            onClose={() => {
+              keepScanOpenRef.current = false
+              setScanOpen(false)
+            }}
           />
         </Modal>
       ) : null}
 
       {completed ? (
         <Modal
-          title="Receipt"
+          title="Sale complete"
           onClose={() => {
             setCompleted(null)
             setCompletedChange(null)
+            setCompletedCash(null)
+            if (keepScanOpenRef.current) setScanOpen(true)
           }}
         >
           <SaleReceiptPanel
             sale={completed}
+            shop={shop ?? undefined}
+            cashGiven={completedCash ?? undefined}
             changeDue={completedChange ?? undefined}
             onDone={() => {
               setCompleted(null)
               setCompletedChange(null)
+              setCompletedCash(null)
+              if (keepScanOpenRef.current) setScanOpen(true)
             }}
           />
         </Modal>

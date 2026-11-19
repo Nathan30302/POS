@@ -1,10 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Check, Moon, Settings2, Sparkles, Sun, Monitor } from 'lucide-react'
 import { PageHero } from '@/components/PageHero'
+import { PhoneShopLink } from '@/components/PhoneShopLink'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
+import {
+  PERMISSION_LABELS,
+  ROLE_LABELS,
+  type Permission,
+} from '@/lib/permissions'
 import {
   applyAllPreferences,
   getAmbientEnabled,
@@ -28,6 +34,10 @@ export function SettingsPage() {
     phone: '',
     address: '',
     currency: 'ZMW',
+    mtnAgentNumber: '',
+    mtnAgentCode: '',
+    airtelAgentNumber: '',
+    airtelAgentCode: '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -45,14 +55,22 @@ export function SettingsPage() {
         phone?: string | null
         address?: string | null
         currency: string
+        settings?: Record<string, unknown>
       }
     }>('/business/me')
       .then((data) => {
+        const settings = data.business.settings || {}
+        const str = (key: string) =>
+          typeof settings[key] === 'string' ? String(settings[key]) : ''
         setForm({
           name: data.business.name || '',
           phone: data.business.phone || '',
           address: data.business.address || '',
           currency: data.business.currency || 'ZMW',
+          mtnAgentNumber: str('mtnAgentNumber'),
+          mtnAgentCode: str('mtnAgentCode'),
+          airtelAgentNumber: str('airtelAgentNumber'),
+          airtelAgentCode: str('airtelAgentCode'),
         })
       })
       .catch(() => undefined)
@@ -80,7 +98,18 @@ export function SettingsPage() {
     try {
       await api('/business/me', {
         method: 'PATCH',
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          name: form.name,
+          phone: form.phone,
+          address: form.address,
+          currency: form.currency,
+          settings: {
+            mtnAgentNumber: form.mtnAgentNumber,
+            mtnAgentCode: form.mtnAgentCode,
+            airtelAgentNumber: form.airtelAgentNumber,
+            airtelAgentCode: form.airtelAgentCode,
+          },
+        }),
       })
       await refresh()
       setOk('Business profile saved.')
@@ -94,9 +123,15 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <PageHero
-        eyebrow="Workspace"
+        eyebrow="Workspace · shop identity"
         title="Settings"
-        subtitle="Make NEXORA feel like your shop — theme, live atmosphere, and business profile."
+        subtitle="Theme, atmosphere, MoMo agents, and the profile that prints on every receipt."
+      />
+
+      <PhoneShopLink
+        path="/login"
+        title="Phone link for staff"
+        hint="Scan this QR on a phone · same Wi‑Fi · sign in · Sell"
       />
 
       <section className="nx-card space-y-5 p-5 sm:p-6">
@@ -243,6 +278,49 @@ export function SettingsPage() {
             value={form.currency}
             onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))}
           />
+
+          <div className="rounded-2xl border border-line bg-surface p-4">
+            <h4 className="font-semibold text-ink">Mobile money</h4>
+            <p className="mt-1 text-xs text-ink-soft">
+              Shown on Sell for MTN MoMo or Airtel Money — your shop payout
+              number for customer send-money or cash-out.
+            </p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Input
+                label="MTN MoMo number"
+                value={form.mtnAgentNumber}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, mtnAgentNumber: e.target.value }))
+                }
+                placeholder="097xxxxxxx"
+              />
+              <Input
+                label="MTN agent code"
+                value={form.mtnAgentCode}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, mtnAgentCode: e.target.value }))
+                }
+                placeholder="Optional"
+              />
+              <Input
+                label="Airtel Money number"
+                value={form.airtelAgentNumber}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, airtelAgentNumber: e.target.value }))
+                }
+                placeholder="097xxxxxxx"
+              />
+              <Input
+                label="Airtel agent code"
+                value={form.airtelAgentCode}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, airtelAgentCode: e.target.value }))
+                }
+                placeholder="Optional"
+              />
+            </div>
+          </div>
+
           {error ? <p className="text-sm text-danger">{error}</p> : null}
           {ok ? <p className="text-sm text-ok">{ok}</p> : null}
           <Button type="submit" disabled={busy}>
@@ -250,10 +328,24 @@ export function SettingsPage() {
           </Button>
         </form>
       ) : (
-        <div className="nx-card p-5 text-sm text-ink-soft">
-          Signed in as <strong className="text-ink">{user?.role}</strong>. Theme and
-          atmosphere settings apply to this device. Only owners/admins can edit the
-          business profile.
+        <div className="nx-card space-y-3 p-5 text-sm text-ink-soft">
+          <p>
+            Signed in as{' '}
+            <strong className="text-ink">
+              {ROLE_LABELS[user?.role || ''] || user?.role}
+            </strong>
+            . Theme and atmosphere apply to this device. Only owners/admins can
+            edit the shop profile.
+          </p>
+          {(user?.permissions || []).length > 0 ? (
+            <ul className="space-y-1">
+              {(user?.permissions || []).map((perm) => (
+                <li key={perm} className="text-xs">
+                  · {PERMISSION_LABELS[perm as Permission] || perm}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       )}
     </div>

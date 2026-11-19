@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import {
-  AlertTriangle,
   PackagePlus,
   Pencil,
   Search,
   Trash2,
   PackageOpen,
 } from 'lucide-react'
+import { EmptyState, LoadingBlock, StatChip } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
@@ -20,7 +20,9 @@ import { PRODUCT_CATEGORIES } from '@/types/database'
 import { ProductForm } from './ProductForm'
 
 export function ProductsPage() {
-  const { isOwnerLike: isOwner } = useAuth()
+  const { isOwnerLike: isOwner, can } = useAuth()
+  const canManageInventory = can('inventory')
+  const canReceiveStock = can('receive_stock')
   const {
     products,
     loading,
@@ -108,10 +110,10 @@ export function ProductsPage() {
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHero
         eyebrow="Inventory · catalogue"
-        title="Products"
-        subtitle="Manage stock, barcodes, and prices for the counter."
+        title="Stock & catalogue"
+        subtitle="Prices, barcodes, and stock — use Voice fill to speak name, rate, and barcode."
         actions={
-          isOwner ? (
+          canManageInventory ? (
             <Button
               type="button"
               className="bg-[#3563E9] hover:bg-[#2f58d4]"
@@ -156,14 +158,13 @@ export function ProductsPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3 text-sm">
-        <span className="rounded-full bg-white px-3 py-1.5 text-ink-soft ring-1 ring-line">
-          {products.length} products
-        </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-amber-800 ring-1 ring-amber-100">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          {lowStockCount} low stock
-        </span>
+      <div className="flex flex-wrap gap-2">
+        <StatChip value={products.length} label="in catalogue" tone="royal" />
+        <StatChip
+          value={lowStockCount}
+          label="low stock"
+          tone={lowStockCount > 0 ? 'warn' : 'ok'}
+        />
       </div>
 
       {error || actionError ? (
@@ -172,18 +173,33 @@ export function ProductsPage() {
         </p>
       ) : null}
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-card shadow-sm">
+      <div className="nx-card overflow-hidden">
         {loading ? (
-          <p className="px-5 py-12 text-center text-sm text-ink-soft">
-            Loading products…
-          </p>
+          <LoadingBlock label="Loading catalogue…" />
         ) : filtered.length === 0 ? (
-          <div className="px-5 py-14 text-center">
-            <p className="font-medium text-ink">No products found</p>
-            <p className="mt-1 text-sm text-ink-soft">
-              Try another search, or add your first stationery item.
-            </p>
-          </div>
+          <EmptyState
+            icon={PackageOpen}
+            title={products.length === 0 ? 'Catalogue is empty' : 'No matches'}
+            body={
+              products.length === 0
+                ? 'Add your first product so Sell and Pulse have real stock to work with.'
+                : 'Try another search or category.'
+            }
+            action={
+              canManageInventory && products.length === 0 ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setEditing(null)
+                    setEditorOpen(true)
+                  }}
+                >
+                  <PackagePlus className="h-4 w-4" />
+                  Add product
+                </Button>
+              ) : null
+            }
+          />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -255,19 +271,21 @@ export function ProductsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-1">
-                          <button
-                            type="button"
-                            className="rounded-lg p-2 text-ink-soft hover:bg-brand-soft/60 hover:text-brand"
-                            onClick={() => {
-                              setReceiving(product)
-                              setReceiveQty(10)
-                            }}
-                            aria-label={`Receive stock for ${product.name}`}
-                            title="Receive stock"
-                          >
-                            <PackageOpen className="h-4 w-4" />
-                          </button>
-                          {isOwner ? (
+                          {canReceiveStock ? (
+                            <button
+                              type="button"
+                              className="rounded-lg p-2 text-ink-soft hover:bg-brand-soft/60 hover:text-brand"
+                              onClick={() => {
+                                setReceiving(product)
+                                setReceiveQty(10)
+                              }}
+                              aria-label={`Receive stock for ${product.name}`}
+                              title="Receive stock"
+                            >
+                              <PackageOpen className="h-4 w-4" />
+                            </button>
+                          ) : null}
+                          {canManageInventory ? (
                             <>
                               <button
                                 type="button"
@@ -301,7 +319,7 @@ export function ProductsPage() {
         )}
       </div>
 
-      {editorOpen && isOwner ? (
+      {editorOpen && canManageInventory ? (
         <Modal
           title={editing ? 'Edit product' : 'Add product'}
           onClose={() => {
@@ -312,7 +330,7 @@ export function ProductsPage() {
         >
           <ProductForm
             initial={editing}
-            showCost
+            showCost={isOwner}
             onCancel={() => {
               setEditorOpen(false)
               setEditing(null)
@@ -322,7 +340,7 @@ export function ProductsPage() {
         </Modal>
       ) : null}
 
-      {receiving ? (
+      {receiving && canReceiveStock ? (
         <Modal title="Receive stock" onClose={() => setReceiving(null)}>
           <p className="text-sm text-ink-soft">
             Add incoming stock for{' '}
@@ -358,7 +376,7 @@ export function ProductsPage() {
         </Modal>
       ) : null}
 
-      {deleting && isOwner ? (
+      {deleting && canManageInventory ? (
         <Modal title="Delete product" onClose={() => setDeleting(null)}>
           <p className="text-sm text-ink-soft">
             Delete <strong className="text-ink">{deleting.name}</strong>? This

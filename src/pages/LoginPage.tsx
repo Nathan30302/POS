@@ -1,10 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { Moon, Sun } from 'lucide-react'
+import { PhoneShopLink } from '@/components/PhoneShopLink'
 import { RealBusinessVideo } from '@/components/RealBusinessVideo'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
+import { businessHomePath } from '@/lib/permissions'
 import { applyAllPreferences, getTheme, toggleTheme } from '@/lib/theme'
+
+const demos = [
+  { label: 'Owner', email: 'owner@demo.shop', password: 'DemoOwner1!' },
+  { label: 'Admin', email: 'admin@demo.shop', password: 'DemoAdmin1!' },
+  { label: 'Cashier', email: 'cashier@demo.shop', password: 'DemoCash1!' },
+  { label: 'Platform', email: 'admin@nexora.app', password: 'NexoraAdmin1!' },
+]
 
 export function LoginPage() {
   const { user, loading, login } = useAuth()
@@ -22,7 +31,11 @@ export function LoginPage() {
   if (!loading && user) {
     return (
       <Navigate
-        to={user.kind === 'platform' ? '/platform' : '/app/dashboard'}
+        to={
+          user.kind === 'platform'
+            ? '/platform'
+            : businessHomePath(user.permissions, user.role)
+        }
         replace
       />
     )
@@ -34,7 +47,11 @@ export function LoginPage() {
     setError('')
     try {
       const next = await login(email.trim(), password)
-      navigate(next.kind === 'platform' ? '/platform' : '/app/dashboard')
+      navigate(
+        next.kind === 'platform'
+          ? '/platform'
+          : businessHomePath(next.permissions, next.role),
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed')
     } finally {
@@ -42,62 +59,117 @@ export function LoginPage() {
     }
   }
 
+  const onPhone =
+    typeof navigator !== 'undefined' &&
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+
   return (
-    <div className="relative flex min-h-screen overflow-hidden bg-[#070d1c] text-white">
+    <div className="relative flex min-h-dvh overflow-x-hidden bg-[#070d1c] text-white">
       <RealBusinessVideo clip="checkout" dim={0.58} />
 
       <button
         type="button"
-        className="absolute right-4 top-4 z-20 rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 backdrop-blur"
+        className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-20 rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 backdrop-blur"
         onClick={() => setTheme(toggleTheme())}
         aria-label="Toggle theme"
       >
         {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
 
-      <div className="relative z-10 mx-auto grid w-full max-w-6xl items-center gap-10 px-6 py-12 lg:grid-cols-2">
-        <div>
-          <Link to="/" className="text-xs font-semibold uppercase tracking-[0.28em] text-[#13B8A6]">
+      <div className="relative z-10 mx-auto grid w-full max-w-6xl items-center gap-8 px-4 py-10 sm:px-6 sm:py-12 lg:grid-cols-2 lg:gap-10">
+        <div className={onPhone ? 'hidden' : ''}>
+          <Link
+            to="/"
+            className="text-xs font-semibold uppercase tracking-[0.28em] text-[#13B8A6]"
+          >
             NEXORA
           </Link>
-          <h1 className="font-display mt-4 text-5xl font-semibold tracking-tight sm:text-6xl">
+          <h1 className="font-display mt-4 text-4xl font-semibold tracking-tight sm:text-6xl">
             Sign in to your
             <br />
-            command center
+            shop OS
           </h1>
           <p className="mt-4 max-w-md text-slate-400">
-            Behind every busy counter — owners run the team, staff log in with
-            the access you give them. Selling, stock, money, and intelligence.
+            Owners run the team. Staff get the access you grant. Selling, stock,
+            money, and Pulse — one workspace.
           </p>
-          <div className="mt-8 space-y-2 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300 backdrop-blur">
-            <p>
-              <span className="text-slate-500">Owner</span> · owner@demo.shop /
-              DemoOwner1!
+          <div className="mt-8">
+            <PhoneShopLink path="/login" />
+          </div>
+          <div className="mt-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+              Demo accounts
             </p>
-            <p>
-              <span className="text-slate-500">Admin</span> · admin@demo.shop /
-              DemoAdmin1!
-            </p>
-            <p>
-              <span className="text-slate-500">Cashier</span> · cashier@demo.shop /
-              DemoCash1!
-            </p>
-            <p>
-              <span className="text-slate-500">Platform</span> · admin@nexora.app /
-              NexoraAdmin1!
-            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {demos.map((demo) => (
+                <button
+                  key={demo.label}
+                  type="button"
+                  onClick={() => {
+                    setEmail(demo.email)
+                    setPassword(demo.password)
+                    setError('')
+                  }}
+                  className={`rounded-full border px-3.5 py-1.5 text-xs font-semibold transition ${
+                    email === demo.email
+                      ? 'border-[#3563E9] bg-[#3563E9]/20 text-white'
+                      : 'border-white/15 bg-white/5 text-slate-300 hover:bg-white/10'
+                  }`}
+                >
+                  {demo.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <form
           onSubmit={onSubmit}
-          className="rounded-3xl border border-white/10 bg-[#0f172a]/75 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl"
+          className="rounded-3xl border border-white/10 bg-[#0f172a]/85 p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8"
         >
-          <h2 className="font-display text-2xl font-semibold">Welcome back</h2>
-          <p className="mt-1 text-sm text-slate-400">
-            Access your business workspace or the NEXORA platform console.
-          </p>
-          <div className="mt-6 space-y-4">
+          {onPhone ? (
+            <div className="mb-4">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#13B8A6]">
+                NEXORA · phone
+              </p>
+              <h2 className="font-display mt-2 text-3xl font-semibold">
+                Sign in
+              </h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Then open Sell — tap products or Snap barcodes.
+              </p>
+            </div>
+          ) : null}
+          {!onPhone ? (
+            <>
+              <h2 className="font-display text-2xl font-semibold">Welcome back</h2>
+              <p className="mt-1 text-sm text-slate-400">
+                Business workspace or NEXORA platform console.
+              </p>
+            </>
+          ) : (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {demos.slice(0, 3).map((demo) => (
+                <button
+                  key={demo.label}
+                  type="button"
+                  onClick={() => {
+                    setEmail(demo.email)
+                    setPassword(demo.password)
+                    setError('')
+                  }}
+                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                    email === demo.email
+                      ? 'border-[#3563E9] bg-[#3563E9]/20 text-white'
+                      : 'border-white/15 bg-white/5 text-slate-300'
+                  }`}
+                >
+                  {demo.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mt-4 space-y-4 sm:mt-6">
             <label className="block space-y-1.5 text-sm">
               <span className="text-slate-300">Email</span>
               <input

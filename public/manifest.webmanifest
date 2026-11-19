@@ -1,11 +1,11 @@
 {
-  "name": "Stationery POS",
-  "short_name": "POS",
-  "description": "Stationery shop point of sale",
+  "name": "NEXORA",
+  "short_name": "NEXORA",
+  "description": "NEXORA business growth OS — sell, stock, team, and Pulse",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#0f766e",
+  "background_color": "#0b1224",
+  "theme_color": "#3563E9",
   "icons": [
     {
       "src": "/favicon.svg",

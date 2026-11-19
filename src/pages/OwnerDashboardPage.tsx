@@ -19,6 +19,7 @@ import {
 import { Button } from '@/components/ui/Button'
 import { api } from '@/lib/api'
 import { formatZMW } from '@/lib/money'
+import { apiPaymentLabel } from '@/types/database'
 
 type DashboardPayload = {
   summary: {
@@ -153,13 +154,19 @@ export function OwnerDashboardPage() {
   if (error) {
     return (
       <div className="nx-card p-6 text-sm text-danger">
-        {error}. Is the NEXORA API running on port 4000?
+        {error}. Refresh the page — if it keeps failing, restart with{' '}
+        <code className="rounded bg-surface px-1">npm run dev</code>.
       </div>
     )
   }
 
   if (!data) {
-    return <p className="text-sm text-ink-soft">Loading command center…</p>
+    return (
+      <div className="flex flex-col items-center gap-3 py-24">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-royal/25 border-t-royal" />
+        <p className="text-sm text-ink-soft">Loading command center…</p>
+      </div>
+    )
   }
 
   const { summary } = data
@@ -180,18 +187,18 @@ export function OwnerDashboardPage() {
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-teal">
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                Live command
+                Owner command
               </span>
               <span className="text-white/50">
                 {clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </span>
             </div>
             <h2 className="font-display mt-4 text-4xl font-bold tracking-tight sm:text-5xl">
-              Grow the shop
+              Command
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-slate-300">
-              Month-to-month money, product momentum, and a growth journal from your
-              real sales — not just a till screen.
+              Live money, product momentum, and a growth journal from real sales —
+              the owner view ordinary shop software never gives you.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -383,20 +390,30 @@ export function OwnerDashboardPage() {
 
         <section className="nx-card p-5">
           <h3 className="font-semibold text-ink">This month’s winners</h3>
-          <p className="mt-1 text-xs text-ink-soft">Focus shelf + staff pitch here</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            Keep these near the counter and train staff to suggest them.
+          </p>
           <ul className="mt-4 space-y-2">
-            {data.topProducts.map((p, i) => (
-              <li
-                key={p.name}
-                className="flex items-center justify-between rounded-xl bg-surface/80 px-3 py-2 text-sm"
-              >
-                <span>
-                  <span className="mr-2 text-xs font-bold text-royal">#{i + 1}</span>
-                  {p.name}
-                </span>
-                <strong>{formatZMW(p.revenue)}</strong>
+            {data.topProducts.length === 0 ? (
+              <li className="rounded-xl bg-surface/80 px-3 py-4 text-sm text-ink-soft">
+                No winners yet this month — complete a few sales on Sell.
               </li>
-            ))}
+            ) : (
+              data.topProducts.map((p, i) => (
+                <li
+                  key={p.name}
+                  className="flex items-center justify-between rounded-xl bg-surface/80 px-3 py-2 text-sm"
+                >
+                  <span>
+                    <span className="mr-2 text-xs font-bold text-royal">
+                      #{i + 1}
+                    </span>
+                    {p.name}
+                  </span>
+                  <strong>{formatZMW(p.revenue)}</strong>
+                </li>
+              ))
+            )}
           </ul>
         </section>
       </div>
@@ -412,7 +429,7 @@ export function OwnerDashboardPage() {
                 <li key={method}>
                   <div className="mb-1 flex justify-between text-sm">
                     <span className="text-ink-soft">
-                      {method.replaceAll('_', ' ')}
+                      {apiPaymentLabel(method)}
                     </span>
                     <strong>{formatZMW(amount)}</strong>
                   </div>
@@ -466,8 +483,14 @@ export function OwnerDashboardPage() {
           </div>
           <ul className="divide-y divide-line">
             {data.recentSales.length === 0 ? (
-              <li className="py-3 text-sm text-ink-soft">
-                No sales yet. Open Sell and ring the first one.
+              <li className="py-4 text-center">
+                <p className="text-sm text-ink-soft">No sales recorded yet.</p>
+                <Link
+                  to="/app/checkout"
+                  className="mt-2 inline-flex text-sm font-semibold text-royal hover:underline"
+                >
+                  Open Sell →
+                </Link>
               </li>
             ) : (
               data.recentSales.map((sale) => (

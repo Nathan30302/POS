@@ -1,8 +1,10 @@
-const CACHE = 'stationery-pos-v1'
+const CACHE = 'nexora-v2'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['/', '/index.html', '/favicon.svg', '/manifest.webmanifest'])),
+    caches.open(CACHE).then((cache) =>
+      cache.addAll(['/', '/index.html', '/favicon.svg', '/manifest.webmanifest']),
+    ),
   )
   self.skipWaiting()
 })

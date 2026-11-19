@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Plus, Search, Trash2, Users } from 'lucide-react'
+import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
 import { api } from '@/lib/api'
@@ -31,21 +32,28 @@ export function CustomersPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [hasLoaded, setHasLoaded] = useState(false)
 
   async function load(q = query) {
     const data = await api<{ customers: Customer[] }>(
       `/customers${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ''}`,
     )
     setCustomers(data.customers)
+    setHasLoaded(true)
   }
 
   useEffect(() => {
-    void load('').catch((err) =>
-      setError(err instanceof Error ? err.message : 'Failed to load customers'),
-    )
+    setLoading(true)
+    void load('')
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : 'Failed to load customers'),
+      )
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
+    if (!hasLoaded) return
     const id = window.setTimeout(() => {
       void load(query).catch(() => undefined)
     }, 250)
@@ -104,7 +112,7 @@ export function CustomersPage() {
       <PageHero
         eyebrow="Relationships · CRM"
         title="Customers"
-        subtitle="Profiles, loyalty, and credit — the people side of your shop OS."
+        subtitle="Loyalty, credit, and contact — know the people who keep the shop busy."
         actions={
           <Button
             type="button"
@@ -112,7 +120,7 @@ export function CustomersPage() {
             onClick={() => setOpen((v) => !v)}
           >
             <Plus className="h-4 w-4" />
-            {open ? 'Close' : 'Add customer'}
+            {open ? 'Close form' : 'Add customer'}
           </Button>
         }
       />
@@ -175,11 +183,30 @@ export function CustomersPage() {
       </div>
 
       <div className="nx-card overflow-hidden">
-        {customers.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-6 py-16 text-center">
-            <Users className="h-8 w-8 text-ink-soft" />
-            <p className="text-sm text-ink-soft">No customers yet — add your first regular.</p>
-          </div>
+        {loading ? (
+          <LoadingBlock label="Loading customers…" />
+        ) : customers.length === 0 ? (
+          <EmptyState
+            icon={Users}
+            title={
+              query.trim()
+                ? `No results for “${query.trim()}”`
+                : 'No customers yet'
+            }
+            body={
+              query.trim()
+                ? 'Try another name, phone, or email.'
+                : 'Add regulars for loyalty points, credit limits, and faster repeat sales.'
+            }
+            action={
+              !query.trim() ? (
+                <Button type="button" onClick={() => setOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Add customer
+                </Button>
+              ) : null
+            }
+          />
         ) : (
           <ul className="divide-y divide-line">
             {customers.map((c) => (

@@ -58,3 +58,28 @@ export function hasPermission(
   if (role === 'OWNER' || role === 'ADMIN') return true
   return (permissions || []).includes(needed)
 }
+
+/** Where staff should land after sign-in. */
+export function businessHomePath(
+  permissions: string[] | undefined,
+  role: string | undefined,
+) {
+  if (
+    role === 'OWNER' ||
+    role === 'ADMIN' ||
+    role === 'BRANCH_MANAGER' ||
+    role === 'ACCOUNTANT' ||
+    hasPermission(permissions, role, 'pulse')
+  ) {
+    return '/app/dashboard'
+  }
+  if (hasPermission(permissions, role, 'sell')) return '/app/checkout'
+  if (hasPermission(permissions, role, 'inventory')) return '/app/products'
+  if (hasPermission(permissions, role, 'ledger')) return '/app/sales'
+  if (hasPermission(permissions, role, 'customers')) return '/app/customers'
+  return '/app/settings'
+}
+
+export function canSeeCommand(role: string | undefined) {
+  return !['CASHIER', 'SALES'].includes(role || '')
+}
