@@ -19,8 +19,10 @@ npm run db:seed
 npm run dev
 ```
 
-- Web: https://localhost:5173 (HTTPS for phone cameras)  
+- Web: http://localhost:5173 (plain HTTP — no cert warning)  
 - API: http://localhost:4000/api/health  
+
+Camera works on **http://localhost** (browsers treat localhost as secure). For phones on Wi‑Fi, see PHONE-SETUP.md (`NEXORA_HTTPS=1` + mkcert).
 
 ### Demo logins
 
@@ -35,20 +37,7 @@ npm run dev
 
 Staff sign in on a phone → **Sell** → Live scan / catalogue. No QR pairing.
 
-Live camera needs HTTPS. For shop Wi‑Fi without browser “Not private” warnings:
-
-```bash
-./scripts/setup-lan-https.sh   # mkcert — once
-npm run dev
-```
-
-Named Cloudflare tunnel (stable hostname — not trycloudflare):
-
-```bash
-./scripts/named-tunnel.sh
-```
-
-Full steps: **[PHONE-SETUP.md](./PHONE-SETUP.md)**.
+On this Mac, use **http://localhost:5173**. For real phones on LAN/tunnel HTTPS, see **[PHONE-SETUP.md](./PHONE-SETUP.md)**.
 
 ## What’s working now
 
@@ -81,3 +70,4 @@ See `docs/NEXORA_IMPLEMENTATION_CHECKLIST.md` for remaining modules (CRM deep fe
 - Tax is configurable per business (`taxEnabled` defaults false).
 - Tenant isolation is enforced server-side via `businessId` on every business query.
 - Phone HTTPS / tunnels: see `PHONE-SETUP.md`.
+- Full working / not-yet status: see **[CURRENT-STATE.md](./CURRENT-STATE.md)**.

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>scan-bench-pending</title>
+  </head>
+  <body>
+    <pre id="out">running…</pre>
+    <script type="module">
+      import JsBarcode from 'https://cdn.jsdelivr.net/npm/jsbarcode@3.12.3/+esm'
+      import {
+        BrowserMultiFormatReader,
+        BarcodeFormat,
+        DecodeHintType,
+      } from 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm'
+
+      const DEMO = '6001001001002'
+      const out = document.getElementById('out')
+      const canvas = document.createElement('canvas')
+      canvas.width = 720
+      canvas.height = 200
+      const ctx = canvas.getContext('2d')
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, 720, 200)
+      JsBarcode(canvas, DEMO, {
+        format: 'CODE128',
+        width: 2,
+        height: 110,
+        displayValue: false,
+        margin: 24,
+      })
+
+      const t0 = performance.now()
+      let engine = 'ZXing'
+      let code = ''
+
+      if (window.BarcodeDetector) {
+        try {
+          const detector = new window.BarcodeDetector({
+            formats: ['code_128', 'ean_13'],
+          })
+          const codes = await detector.detect(canvas)
+          code = codes[0]?.rawValue?.trim() || ''
+          engine = 'BarcodeDetector'
+        } catch {
+          /* fall through */
+        }
+      }
+
+      if (!code) {
+        const hints = new Map()
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.EAN_13,
+        ])
+        hints.set(DecodeHintType.TRY_HARDER, false)
+        const reader = new BrowserMultiFormatReader(hints)
+        code = reader.decodeFromCanvas(canvas).getText().trim()
+        engine = 'ZXing'
+      }
+
+      const ms = performance.now() - t0
+      const ok = code === DEMO && ms < 1000
+      const line = `${ok ? 'PASS' : 'FAIL'} ${engine} ${ms.toFixed(1)}ms code=${code}`
+      out.textContent = line
+      document.title = line
+      console.log(line)
+    </script>
+  </body>
+</html>

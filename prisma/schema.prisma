@@ -114,6 +114,9 @@ model Business {
   auditLogs    AuditLog[]
   insights     BusinessInsight[]
   purchaseOrders PurchaseOrder[]
+  paymentAttempts PaymentAttempt[]
+  stockConflicts  StockConflict[]
+  dailyBriefings  DailyBriefing[]
 }
 
 model Branch {
@@ -266,6 +269,8 @@ model Sale {
   paymentJson   String        @default("[]")
   notes         String?
   receiptNo     String?
+  /// Client-generated id for offline / retry idempotency (unique per business)
+  clientSaleId  String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
@@ -274,7 +279,9 @@ model Sale {
   customer Customer?  @relation(fields: [customerId], references: [id])
   soldBy   User?      @relation("SoldBy", fields: [soldById], references: [id])
   items    SaleItem[]
+  payments PaymentAttempt[]
 
+  @@unique([businessId, clientSaleId])
   @@index([businessId, createdAt])
   @@index([businessId, status])
 }
@@ -378,12 +385,87 @@ model BusinessInsight {
   impact     String?
   action     String?
   severity   String   @default("info")
+  /// new | in_progress | resolved | dismissed
+  status     String   @default("new")
+  priority   String   @default("medium")
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@index([businessId, active])
+  @@index([businessId, status])
+}
+
+enum PaymentAttemptStatus {
+  INITIATED
+  PENDING
+  CONFIRMED
+  FAILED
+  CANCELLED
+  REVERSED
+}
+
+model PaymentAttempt {
+  id           String               @id @default(cuid())
+  businessId   String
+  saleId       String?
+  provider     String
+  status       PaymentAttemptStatus @default(INITIATED)
+  amount       Float
+  currency     String               @default("ZMW")
+  clientRef    String?
+  externalRef  String?
+  metaJson     String               @default("{}")
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  sale     Sale?    @relation(fields: [saleId], references: [id])
+
+  @@unique([businessId, clientRef])
+  @@index([businessId, status])
+  @@index([saleId])
+}
+
+enum StockConflictStatus {
+  OPEN
+  ACCEPTED_NEGATIVE
+  ADJUSTED
+  DISMISSED
+}
+
+model StockConflict {
+  id            String              @id @default(cuid())
+  businessId    String
+  productId     String
+  productName   String
+  clientSaleId  String?
+  requestedQty  Int
+  availableQty  Int
+  status        StockConflictStatus @default(OPEN)
+  resolution    String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+}
+
+model DailyBriefing {
+  id         String   @id @default(cuid())
+  businessId String
+  /// YYYY-MM-DD in business timezone (stored as date key)
+  dateKey    String
+  payloadJson String  @default("{}")
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, dateKey])
+  @@index([businessId, createdAt])
 }
 
 model AuditLog {

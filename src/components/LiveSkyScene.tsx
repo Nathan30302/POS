@@ -84,7 +84,7 @@ export function LiveAmbient() {
       <div className="ambient-orb ambient-orb-b" />
       <div className="ambient-orb ambient-orb-c" />
       <div className="ambient-dust">
-        {Array.from({ length: 18 }).map((_, i) => (
+        {Array.from({ length: 28 }).map((_, i) => (
           <span key={i} style={{ '--i': i } as CSSProperties} />
         ))}
       </div>

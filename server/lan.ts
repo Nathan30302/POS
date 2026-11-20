@@ -5,7 +5,14 @@ export function lanIpv4Addresses(): string[] {
   const preferred: string[] = []
   const other: string[] = []
 
-  for (const entries of Object.values(os.networkInterfaces())) {
+  let interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>
+  try {
+    interfaces = os.networkInterfaces()
+  } catch {
+    return []
+  }
+
+  for (const entries of Object.values(interfaces)) {
     for (const net of entries ?? []) {
       const family = String(net.family)
       if (family !== 'IPv4' && family !== '4') continue
@@ -28,9 +35,9 @@ export function lanIpv4Addresses(): string[] {
 
 export function shopUrlsForLan(
   webPort = Number(process.env.WEB_PORT || 5173),
-  protocol = process.env.WEB_PROTOCOL || 'https',
+  // Default HTTP so local testing isn’t blocked by cert warnings
+  protocol = process.env.WEB_PROTOCOL || 'http',
 ) {
-  // HTTPS by default so phone browsers allow live camera scanning
-  const scheme = protocol === 'http' ? 'http' : 'https'
+  const scheme = protocol === 'https' ? 'https' : 'http'
   return lanIpv4Addresses().map((ip) => `${scheme}://${ip}:${webPort}`)
 }

@@ -2,13 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Eraser,
-  Minus,
   PackageOpen,
-  Plus,
   ScanLine,
   Search,
   Smartphone,
-  Trash2,
 } from 'lucide-react'
 import { BarcodeScanner } from '@/components/BarcodeScanner'
 import { EmptyState } from '@/components/EmptyState'
@@ -18,10 +15,16 @@ import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
+import { useOfflineSalesSync } from '@/hooks/useOfflineSalesSync'
 import { useProducts } from '@/hooks/useProducts'
+import { useVirtualGrid } from '@/hooks/useVirtualGrid'
+import { CartLineRow } from '@/pages/checkout/CartLineRow'
+import { CatalogueTile } from '@/pages/checkout/CatalogueTile'
 import { api } from '@/lib/api'
 import { buildProductIndex, findProductByCode } from '@/lib/findProduct'
+import { enqueueSale, isProbablyOffline } from '@/lib/offlineQueue'
 import { formatZMW } from '@/lib/money'
+import { loyaltyDiscountKwacha, suggestTenders } from '@/lib/tender'
 import type { ScanResult } from '@/lib/peerRoom'
 import {
   playErrorBuzz,
@@ -74,6 +77,11 @@ export function CheckoutPage() {
   const [catalogueQuery, setCatalogueQuery] = useState('')
   const [catalogueCategory, setCatalogueCategory] = useState('All')
   const [lastCart, setLastCart] = useState<CartLine[]>([])
+  const [customerPhone, setCustomerPhone] = useState('')
+  const [customerId, setCustomerId] = useState<string | null>(null)
+  const [customerLabel, setCustomerLabel] = useState('')
+  const [customerPts, setCustomerPts] = useState(0)
+  const [customerBusy, setCustomerBusy] = useState(false)
   const [showPathTip, setShowPathTip] = useState(() => {
     try {
       return localStorage.getItem('nexora-sell-path-tip') !== '1'
@@ -81,11 +89,14 @@ export function CheckoutPage() {
       return true
     }
   })
+  const { online, pendingCount, syncing, syncAll } = useOfflineSalesSync(true)
   const isPhone =
     typeof navigator !== 'undefined' &&
     /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
   const barcodeTimerRef = useRef<number | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
+  const catalogueScrollRef = useRef<HTMLDivElement | null>(null)
+  const [catalogueCols, setCatalogueCols] = useState(isPhone ? 2 : 3)
   const keepScanOpenRef = useRef(false)
   const cartRef = useRef(cart)
   cartRef.current = cart
@@ -134,6 +145,26 @@ export function CheckoutPage() {
     })
   }, [products, catalogueQuery, catalogueCategory])
 
+  useEffect(() => {
+    const el = catalogueScrollRef.current
+    if (!el) return
+    const update = () => {
+      const w = el.clientWidth
+      setCatalogueCols(w < 420 ? 2 : w < 720 ? 3 : 4)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [products.length, loading])
+
+  const virtualCatalogue = useVirtualGrid(catalogue, {
+    containerRef: catalogueScrollRef,
+    rowHeight: 168,
+    columns: catalogueCols,
+    overscan: 3,
+  })
+
   const subtotal = cart.reduce(
     (sum, line) => sum + line.product.selling_price * line.quantity,
     0,
@@ -151,6 +182,31 @@ export function CheckoutPage() {
     needsCashTender && Number.isFinite(cashValue) && cashReceived !== ''
       ? cashValue - total
       : null
+
+  const tenderSuggestions = useMemo(
+    () => (paymentMethod === 'cash' ? suggestTenders(total) : []),
+    [paymentMethod, total],
+  )
+
+  const loyaltyOffer = useMemo(
+    () =>
+      canDiscount ? loyaltyDiscountKwacha(customerPts, subtotal) : 0,
+    [canDiscount, customerPts, subtotal],
+  )
+
+  const recentProducts = useMemo(() => {
+    const seen = new Set<string>()
+    const out: typeof products = []
+    for (const line of lastCart) {
+      const id = line.product.id
+      if (seen.has(id)) continue
+      seen.add(id)
+      const fresh = productIndex.byId.get(id)
+      if (fresh) out.push(fresh)
+      if (out.length >= 8) break
+    }
+    return out
+  }, [lastCart, productIndex, products])
 
   const momoAgent =
     paymentMethod === 'mtn'
@@ -177,22 +233,46 @@ export function CheckoutPage() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement | null)?.tagName
+      const typing =
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
       if (e.key === 'F2') {
         e.preventDefault()
         searchRef.current?.focus()
         searchRef.current?.select()
       }
+      if (e.key === 'F3') {
+        e.preventDefault()
+        unlockAudio()
+        setScanStatus({ message: 'Point at barcode', tone: 'idle' })
+        setScanOpen(true)
+      }
       if (e.key === 'F4') {
         e.preventDefault()
         void completeSaleRef.current()
+      }
+      if (e.key === 'Escape' && !typing) {
+        setQuery('')
+        setError('')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const clearCustomer = useCallback(() => {
+    setCustomerId(null)
+    setCustomerLabel('')
+    setCustomerPhone('')
+    setCustomerPts(0)
+  }, [])
+
   const addProduct = useCallback(
-    (productId: string, source: 'scan' | 'manual' = 'manual'): ScanResult => {
+    (
+      productId: string,
+      source: 'scan' | 'manual' = 'manual',
+      qty = 1,
+    ): ScanResult => {
       setError('')
       const product =
         productIndexRef.current.byId.get(productId) ||
@@ -221,7 +301,9 @@ export function CheckoutPage() {
       }
 
       const existing = cartRef.current.find((line) => line.product.id === productId)
-      if (existing && existing.quantity >= product.stock_quantity) {
+      const already = existing?.quantity || 0
+      const room = product.stock_quantity - already
+      if (room <= 0) {
         const message = `Only ${product.stock_quantity} left · ${product.name}`
         setError(message)
         if (source === 'scan') {
@@ -233,27 +315,29 @@ export function CheckoutPage() {
         return { ok: false, label: product.name, message }
       }
 
+      const addQty = Math.min(Math.max(1, qty), room)
+
       setCart((prev) => {
         const current = prev.find((line) => line.product.id === productId)
         if (current) {
           return prev.map((line) =>
             line.product.id === productId
-              ? { ...line, quantity: line.quantity + 1 }
+              ? { ...line, quantity: line.quantity + addQty }
               : line,
           )
         }
-        return [...prev, { product, quantity: 1 }]
+        return [...prev, { product, quantity: addQty }]
       })
 
       unlockAudio()
       playScanBeep()
       try {
-        navigator.vibrate?.(source === 'scan' ? 28 : 18)
+        navigator.vibrate?.(source === 'scan' ? 28 : addQty > 1 ? 36 : 18)
       } catch {
         // ignore
       }
       const label = `${product.name} · ${formatZMW(product.selling_price)}`
-      const message = `+ ${label}`
+      const message = addQty > 1 ? `+${addQty} ${label}` : `+ ${label}`
       setFlash(message)
       window.setTimeout(() => setFlash(''), 900)
       if (source === 'scan') {
@@ -296,11 +380,73 @@ export function CheckoutPage() {
         .map((line) => {
           if (line.product.id !== productId) return line
           const max = line.product.stock_quantity
-          return { ...line, quantity: Math.min(Math.max(1, quantity), max) }
+          return { ...line, quantity: Math.min(Math.max(0, quantity), max) }
         })
         .filter((line) => line.quantity > 0),
     )
   }
+
+  function removeLine(productId: string) {
+    setCart((prev) => prev.filter((l) => l.product.id !== productId))
+  }
+
+  async function lookupCustomer(raw?: string) {
+    const phone = (raw ?? customerPhone).trim()
+    if (!phone) {
+      setCustomerId(null)
+      setCustomerLabel('')
+      setCustomerPts(0)
+      return
+    }
+    if (phone.length < 3) return
+    setCustomerBusy(true)
+    try {
+      const data = await api<{
+        customers: Array<{
+          id: string
+          fullName: string
+          phone: string | null
+          loyaltyPts: number
+          balance: number
+        }>
+      }>(`/customers?q=${encodeURIComponent(phone)}`)
+      const hit = data.customers[0]
+      if (!hit) {
+        setCustomerId(null)
+        setCustomerPts(0)
+        setCustomerLabel('No customer match')
+        return
+      }
+      setCustomerId(hit.id)
+      setCustomerPts(hit.loyaltyPts || 0)
+      setCustomerLabel(
+        `${hit.fullName}${hit.loyaltyPts ? ` · ${hit.loyaltyPts} pts` : ''}${
+          hit.balance > 0 ? ` · owes ${formatZMW(hit.balance)}` : ''
+        }`,
+      )
+    } catch {
+      setCustomerLabel('Customer lookup unavailable offline')
+    } finally {
+      setCustomerBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    const phone = customerPhone.trim()
+    if (phone.length < 3) {
+      if (!phone) {
+        setCustomerId(null)
+        setCustomerLabel('')
+        setCustomerPts(0)
+      }
+      return
+    }
+    const t = window.setTimeout(() => {
+      void lookupCustomer(phone)
+    }, 380)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- debounce phone only
+  }, [customerPhone])
 
   async function completeSale() {
     if (!cart.length) {
@@ -336,6 +482,67 @@ export function CheckoutPage() {
       if (momoAgent?.code) {
         noteParts.push(`Agent code: ${momoAgent.code}`)
       }
+      if (customerLabel) noteParts.push(`Customer: ${customerLabel}`)
+
+      const clientSaleId = crypto.randomUUID()
+      const payloadLines = cart.map((line) => ({
+        productId: line.product.id,
+        quantity: line.quantity,
+        productName: line.product.name,
+        unitPrice: line.product.selling_price,
+      }))
+      const notes = noteParts.length ? noteParts.join(' · ') : undefined
+      const paymentApi = PAYMENT_API[paymentMethod]
+
+      // Offline: durable queue, optimistic receipt, sync later
+      if (isProbablyOffline() || !online) {
+        await enqueueSale({
+          clientSaleId,
+          discount: safeDiscount,
+          paymentMethod: paymentApi,
+          notes,
+          customerId: customerId || undefined,
+          lines: payloadLines,
+        })
+        const offlineMapped = {
+          id: clientSaleId,
+          total,
+          discount: safeDiscount,
+          payment_method: paymentMethod,
+          notes: notes || 'Queued offline — awaiting sync',
+          created_at: new Date().toISOString(),
+          items: cart.map((line, i) => ({
+            id: `${clientSaleId}-${i}`,
+            sale_id: clientSaleId,
+            product_id: line.product.id,
+            product_name: line.product.name,
+            quantity: line.quantity,
+            unit_price: line.product.selling_price,
+            line_total: line.product.selling_price * line.quantity,
+          })),
+        }
+        playSuccessChime()
+        push(`Saved offline · sync when online`, 'ok')
+        setCompletedCash(
+          cashReceived !== '' && Number.isFinite(cashValue) ? cashValue : null,
+        )
+        setCompletedChange(change !== null ? change : null)
+        setCompleted(offlineMapped)
+        setLastCart(cart.map((line) => ({ ...line })))
+        applyStockDeltas(
+          cart.map((line) => ({
+            productId: line.product.id,
+            delta: -line.quantity,
+          })),
+        )
+        setCart([])
+        setDiscount(0)
+        setCashReceived('')
+        setPaymentMethod('cash')
+        clearCustomer()
+        if (scanOpen) keepScanOpenRef.current = true
+        return
+      }
 
       const data = await api<{
         sale: {
@@ -365,13 +572,15 @@ export function CheckoutPage() {
       }>('/sales', {
         method: 'POST',
         body: JSON.stringify({
-          lines: cart.map((line) => ({
-            productId: line.product.id,
-            quantity: line.quantity,
+          clientSaleId,
+          customerId: customerId || undefined,
+          lines: payloadLines.map((l) => ({
+            productId: l.productId,
+            quantity: l.quantity,
           })),
           discount: safeDiscount,
-          paymentMethod: PAYMENT_API[paymentMethod],
-          notes: noteParts.length ? noteParts.join(' · ') : undefined,
+          paymentMethod: paymentApi,
+          notes,
         }),
       })
       const sale = data.sale
@@ -400,7 +609,6 @@ export function CheckoutPage() {
       setCompletedChange(change !== null ? change : null)
       setCompleted(mapped)
       setLastCart(cart.map((line) => ({ ...line })))
-      // Optimistic stock — no full catalogue reload (keeps Sell snappy)
       applyStockDeltas(
         cart.map((line) => ({
           productId: line.product.id,
@@ -411,14 +619,48 @@ export function CheckoutPage() {
       setDiscount(0)
       setCashReceived('')
       setPaymentMethod('cash')
-      // Background reconcile — don’t block the next customer
+      clearCustomer()
       window.setTimeout(() => {
         void refresh({ silent: true })
       }, 2500)
-      // Keep the live camera session ready for the next customer
       if (scanOpen) keepScanOpenRef.current = true
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sale failed'
+      // Network failure mid-request → queue locally
+      if (/failed to fetch|network|offline/i.test(msg)) {
+        try {
+          const clientSaleId = crypto.randomUUID()
+          await enqueueSale({
+            clientSaleId,
+            discount: safeDiscount,
+            paymentMethod: PAYMENT_API[paymentMethod],
+            notes: 'Queued after network error',
+            customerId: customerId || undefined,
+            lines: cart.map((line) => ({
+              productId: line.product.id,
+              quantity: line.quantity,
+              productName: line.product.name,
+              unitPrice: line.product.selling_price,
+            })),
+          })
+          push('Network dropped — sale queued offline', 'info')
+          applyStockDeltas(
+            cart.map((line) => ({
+              productId: line.product.id,
+              delta: -line.quantity,
+            })),
+          )
+          setLastCart(cart.map((line) => ({ ...line })))
+          setCart([])
+          setDiscount(0)
+          setCashReceived('')
+          clearCustomer()
+          setBusy(false)
+          return
+        } catch {
+          // fall through
+        }
+      }
       setError(msg)
       push(msg, 'error')
     } finally {
@@ -476,6 +718,34 @@ export function CheckoutPage() {
           </div>
         </div>
 
+        {!online || pendingCount > 0 ? (
+          <div
+            className={`rounded-2xl border px-4 py-3 text-sm ${
+              online
+                ? 'border-amber-500/30 bg-amber-500/10 text-ink'
+                : 'border-red-500/30 bg-red-500/10 text-ink'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold">
+                {online
+                  ? `${pendingCount} sale${pendingCount === 1 ? '' : 's'} waiting to sync`
+                  : 'Offline — sales will queue on this device'}
+              </p>
+              {online && pendingCount > 0 ? (
+                <button
+                  type="button"
+                  className="rounded-lg bg-card px-3 py-1.5 text-xs font-semibold"
+                  disabled={syncing}
+                  onClick={() => void syncAll()}
+                >
+                  {syncing ? 'Syncing…' : 'Sync now'}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         {showPathTip ? (
           <div className="rounded-2xl border border-teal/30 bg-teal/10 px-4 py-3 text-sm text-ink">
             <div className="flex items-start justify-between gap-3">
@@ -504,6 +774,51 @@ export function CheckoutPage() {
             </div>
           </div>
         ) : null}
+
+        <div className="nx-card space-y-2 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <label className="min-w-0 flex-1 text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-ink-soft">
+                Customer phone / loyalty
+              </span>
+              <input
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                onBlur={() => void lookupCustomer()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void lookupCustomer()
+                  }
+                }}
+                placeholder="097… or name"
+                inputMode="tel"
+                autoComplete="tel"
+                className="w-full rounded-xl border border-line bg-card px-3 py-2.5 outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
+              />
+            </label>
+            <p className="pb-2 text-xs text-ink-soft sm:max-w-[14rem]">
+              {customerBusy
+                ? 'Looking up…'
+                : customerLabel || 'Optional — links history when found'}
+            </p>
+          </div>
+          {customerId && loyaltyOffer > 0 && discount < loyaltyOffer ? (
+            <button
+              type="button"
+              onClick={() => {
+                setDiscount(loyaltyOffer)
+                push(`Loyalty applied · ${formatZMW(loyaltyOffer)} off`, 'ok')
+              }}
+              className="w-full rounded-xl border border-teal/30 bg-teal/10 px-3 py-2 text-left text-sm font-semibold text-ink transition hover:bg-teal/15"
+            >
+              Apply loyalty · {formatZMW(loyaltyOffer)} off
+              <span className="mt-0.5 block text-[11px] font-normal text-ink-soft">
+                {customerPts} pts · 10 pts = K1 · max 20% of subtotal
+              </span>
+            </button>
+          ) : null}
+        </div>
 
         {flash ? (
           <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
@@ -686,8 +1001,7 @@ export function CheckoutPage() {
             <div>
               <h3 className="font-semibold text-ink">Shop catalogue</h3>
               <p className="mt-0.5 text-xs text-ink-soft">
-                Click (or tap) a product to add it — click again to add another.
-                Works with mouse or touchscreen.
+                Tap to add · hold tile for +5 · F2 search · F3 scan · F4 complete
               </p>
             </div>
             {loading ? (
@@ -723,6 +1037,41 @@ export function CheckoutPage() {
             </select>
           </div>
 
+          {recentProducts.length > 0 &&
+          catalogueCategory === 'All' &&
+          !catalogueQuery.trim() ? (
+            <div className="mb-3">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-ink-soft">
+                Last sale
+              </p>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {recentProducts.map((product) => {
+                  const inCart = cartQtyById.get(product.id) || 0
+                  return (
+                    <button
+                      key={`recent-${product.id}`}
+                      type="button"
+                      onClick={() => addProduct(product.id)}
+                      className={`shrink-0 max-w-[9.5rem] rounded-xl border px-3 py-2 text-left transition active:scale-[0.98] ${
+                        inCart
+                          ? 'border-royal/40 bg-royal/10'
+                          : 'border-line bg-surface hover:border-brand'
+                      }`}
+                    >
+                      <p className="line-clamp-1 text-xs font-semibold text-ink">
+                        {product.name}
+                      </p>
+                      <p className="text-[11px] text-brand">
+                        {formatZMW(product.selling_price)}
+                        {inCart ? ` · ×${inCart}` : ''}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+
           {!loading && products.length === 0 ? (
             <EmptyState
               icon={PackageOpen}
@@ -736,53 +1085,29 @@ export function CheckoutPage() {
               body="Try another filter or category."
             />
           ) : (
-            <div className="max-h-[min(58vh,480px)] overflow-y-auto overscroll-contain pr-1">
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {catalogue.map((product) => {
-                  const inCart = cartQtyById.get(product.id) || 0
-                  const low =
-                    product.stock_quantity <= product.low_stock_threshold
-                  return (
-                    <button
+            <div
+              ref={catalogueScrollRef}
+              className="max-h-[min(58vh,480px)] overflow-y-auto overscroll-contain pr-1"
+            >
+              <div
+                style={{ height: virtualCatalogue.totalHeight, position: 'relative' }}
+              >
+                <div
+                  className="grid gap-2"
+                  style={{
+                    gridTemplateColumns: `repeat(${catalogueCols}, minmax(0, 1fr))`,
+                    transform: `translateY(${virtualCatalogue.offsetY}px)`,
+                  }}
+                >
+                  {virtualCatalogue.visible.map((product) => (
+                    <CatalogueTile
                       key={product.id}
-                      type="button"
-                      onClick={() => addProduct(product.id)}
-                      className={`relative rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] ${
-                        inCart
-                          ? 'border-royal/40 bg-royal/10 hover:bg-royal/15'
-                          : 'border-line hover:border-brand hover:bg-brand-soft/40'
-                      }`}
-                    >
-                      {inCart > 0 ? (
-                        <span className="absolute right-2 top-2 inline-flex min-w-6 items-center justify-center rounded-full bg-royal px-1.5 py-0.5 text-[11px] font-bold text-white">
-                          {inCart}
-                        </span>
-                      ) : null}
-                      {product.image_url ? (
-                        <img
-                          src={product.image_url}
-                          alt=""
-                          className="mb-2 h-16 w-full rounded-lg object-cover bg-surface"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="mb-2 flex h-12 items-center justify-center rounded-lg bg-surface text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-                          {product.category}
-                        </div>
-                      )}
-                      <p className="line-clamp-2 text-sm font-medium text-ink">
-                        {product.name}
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-brand">
-                        {formatZMW(product.selling_price)}
-                      </p>
-                      <p className="mt-0.5 text-[11px] text-ink-soft">
-                        Stock {product.stock_quantity}
-                        {low ? ' · low' : ''}
-                      </p>
-                    </button>
-                  )
-                })}
+                      product={product}
+                      inCart={cartQtyById.get(product.id) || 0}
+                      onAdd={(id, qty = 1) => addProduct(id, 'manual', qty)}
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -835,61 +1160,14 @@ export function CheckoutPage() {
               ) : null}
             </div>
           ) : (
-            <ul className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto pr-1">
+            <ul className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
               {cart.map((line) => (
-                <li
+                <CartLineRow
                   key={line.product.id}
-                  className="rounded-xl border border-line px-3 py-3"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium text-ink">{line.product.name}</p>
-                      <p className="text-xs text-ink-soft">
-                        {formatZMW(line.product.selling_price)} each
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      className="rounded-lg p-1.5 text-ink-soft hover:bg-red-50 hover:text-danger"
-                      onClick={() =>
-                        setCart((prev) =>
-                          prev.filter((l) => l.product.id !== line.product.id),
-                        )
-                      }
-                      aria-label="Remove"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="inline-flex items-center gap-2 rounded-xl bg-surface p-1">
-                      <button
-                        type="button"
-                        className="rounded-lg p-2 hover:bg-card"
-                        onClick={() =>
-                          setQty(line.product.id, line.quantity - 1)
-                        }
-                      >
-                        <Minus className="h-4 w-4" />
-                      </button>
-                      <span className="min-w-8 text-center font-semibold">
-                        {line.quantity}
-                      </span>
-                      <button
-                        type="button"
-                        className="rounded-lg p-2 hover:bg-card"
-                        onClick={() =>
-                          setQty(line.product.id, line.quantity + 1)
-                        }
-                      >
-                        <Plus className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <p className="font-semibold">
-                      {formatZMW(line.product.selling_price * line.quantity)}
-                    </p>
-                  </div>
-                </li>
+                  line={line}
+                  onSetQty={setQty}
+                  onRemove={removeLine}
+                />
               ))}
             </ul>
           )}
@@ -986,6 +1264,30 @@ export function CheckoutPage() {
                   className="w-28 rounded-xl border border-line bg-card px-3 py-2 text-right outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
                 />
               </label>
+              {tenderSuggestions.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {tenderSuggestions.map((amount, i) => {
+                    const selected =
+                      cashReceived !== '' &&
+                      Math.abs(Number(cashReceived) - amount) < 0.001
+                    const isExact = i === 0
+                    return (
+                      <button
+                        key={`${amount}-${i}`}
+                        type="button"
+                        onClick={() => setCashReceived(amount.toFixed(2))}
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold tabular-nums transition ${
+                          selected
+                            ? 'border-royal bg-royal text-white'
+                            : 'border-line bg-card text-ink hover:border-royal/40'
+                        }`}
+                      >
+                        {isExact ? 'Exact' : formatZMW(amount)}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
               {change !== null ? (
                 <p
                   className={`text-sm font-semibold ${
@@ -996,7 +1298,7 @@ export function CheckoutPage() {
                 </p>
               ) : (
                 <p className="text-xs text-ink-soft">
-                  Optional — enter cash given to calculate change for the receipt.
+                  Tap Exact or a note — change prints on the receipt.
                 </p>
               )}
             </div>
@@ -1024,6 +1326,10 @@ export function CheckoutPage() {
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs text-ink-soft">
                 {cartItemCount} item{cartItemCount === 1 ? '' : 's'}
+                {' · '}
+                {PAYMENT_METHODS.find((m) => m.value === paymentMethod)?.label ||
+                  paymentMethod}
+                {safeDiscount > 0 ? ` · −${formatZMW(safeDiscount)}` : ''}
               </p>
               <p className="font-display text-lg font-bold tabular-nums text-ink">
                 {formatZMW(total)}
@@ -1035,7 +1341,7 @@ export function CheckoutPage() {
               disabled={busy}
               onClick={() => void completeSale()}
             >
-              {busy ? 'Saving…' : 'Complete sale'}
+              {busy ? 'Saving…' : 'Complete'}
             </Button>
           </div>
         </div>

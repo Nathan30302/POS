@@ -1,12 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
-import { Moon, Sun } from 'lucide-react'
+import { Moon, Sparkles, Sun } from 'lucide-react'
 import { PhoneShopLink } from '@/components/PhoneShopLink'
 import { RealBusinessVideo } from '@/components/RealBusinessVideo'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 import { businessHomePath } from '@/lib/permissions'
-import { applyAllPreferences, getTheme, toggleTheme } from '@/lib/theme'
+import {
+  applyAllPreferences,
+  getTheme,
+  getThemePreference,
+  isLiveTheme,
+  toggleTheme,
+} from '@/lib/theme'
 
 const demos = [
   { label: 'Owner', email: 'owner@demo.shop', password: 'DemoOwner1!' },
@@ -23,9 +29,11 @@ export function LoginPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [theme, setTheme] = useState(getTheme())
+  const [liveOn, setLiveOn] = useState(isLiveTheme())
 
   useEffect(() => {
     applyAllPreferences()
+    setLiveOn(isLiveTheme(getThemePreference()))
   }, [])
 
   if (!loading && user) {
@@ -70,10 +78,20 @@ export function LoginPage() {
       <button
         type="button"
         className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-20 rounded-xl border border-white/10 bg-white/5 p-2 text-slate-300 backdrop-blur"
-        onClick={() => setTheme(toggleTheme())}
-        aria-label="Toggle theme"
+        onClick={() => {
+          setTheme(toggleTheme())
+          setLiveOn(isLiveTheme())
+        }}
+        aria-label="Cycle theme"
+        title="Light → Dark → Live Floor"
       >
-        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        {liveOn ? (
+          <Sparkles className="h-4 w-4 text-teal-300" />
+        ) : theme === 'dark' ? (
+          <Sun className="h-4 w-4" />
+        ) : (
+          <Moon className="h-4 w-4" />
+        )}
       </button>
 
       <div className="relative z-10 mx-auto grid w-full max-w-6xl items-center gap-8 px-4 py-10 sm:px-6 sm:py-12 lg:grid-cols-2 lg:gap-10">

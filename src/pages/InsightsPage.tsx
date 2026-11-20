@@ -26,6 +26,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { PageHero } from '@/components/PageHero'
+import { ScenarioSimulator } from '@/components/ScenarioSimulator'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
@@ -217,6 +218,14 @@ export function InsightsPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [briefing, setBriefing] = useState<{
+    salesCount: number
+    revenue: number
+    grossProfit: number
+    lowStock: Array<{ name: string; stock: number }>
+    openStockConflicts: number
+    note?: string
+  } | null>(null)
 
   async function load(generate = false) {
     setError('')
@@ -230,6 +239,22 @@ export function InsightsPage() {
       })
     }
     setInsights(insightData.insights)
+
+    try {
+      const brief = await api<{
+        briefing: {
+          salesCount: number
+          revenue: number
+          grossProfit: number
+          lowStock: Array<{ name: string; stock: number }>
+          openStockConflicts: number
+          note?: string
+        }
+      }>('/insights/briefing/today')
+      setBriefing(brief.briefing)
+    } catch {
+      setBriefing(null)
+    }
   }
 
   useEffect(() => {
@@ -312,6 +337,49 @@ export function InsightsPage() {
         <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-danger">
           {error}
         </p>
+      ) : null}
+
+      {pulse ? (
+        <ScenarioSimulator
+          baselineRevenue30={pulse.revenue30}
+          baselineMargin30={pulse.margin30}
+          avgTicket30={pulse.avgTicket30}
+        />
+      ) : null}
+
+      {briefing ? (
+        <section className="nx-card p-5 sm:p-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
+            Daily briefing
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-4">
+            <div>
+              <p className="text-xs text-ink-soft">Sales today</p>
+              <p className="font-display text-2xl font-bold">{briefing.salesCount}</p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-soft">Revenue</p>
+              <p className="font-display text-2xl font-bold">
+                {formatZMW(briefing.revenue)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-soft">Gross profit</p>
+              <p className="font-display text-2xl font-bold">
+                {formatZMW(briefing.grossProfit)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-ink-soft">Low stock / conflicts</p>
+              <p className="font-display text-2xl font-bold">
+                {briefing.lowStock.length}/{briefing.openStockConflicts}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-ink-soft">
+            {briefing.note || 'Calculated from completed sales and live stock.'}
+          </p>
+        </section>
       ) : null}
 
       {loading && !pulse ? (

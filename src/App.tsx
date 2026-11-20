@@ -18,6 +18,9 @@ import { CustomersPage } from '@/pages/CustomersPage'
 import { OnboardingPage } from '@/pages/OnboardingPage'
 import { TeamPage } from '@/pages/TeamPage'
 import { SettingsPage } from '@/pages/SettingsPage'
+import { AuditLogPage } from '@/pages/AuditLogPage'
+import { StockConflictsPage } from '@/pages/StockConflictsPage'
+import { ScanBenchPage } from '@/pages/ScanBenchPage'
 
 function Guard({
   children,
@@ -81,6 +84,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/scan-bench" element={<ScanBenchPage />} />
       <Route path="/phone-scan/:roomId" element={<PhoneScannerPage />} />
 
       <Route
@@ -155,6 +159,22 @@ export default function App() {
           element={
             <RequirePerm permission="team">
               <TeamPage />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="audit"
+          element={
+            <RequirePerm permission="team">
+              <AuditLogPage />
+            </RequirePerm>
+          }
+        />
+        <Route
+          path="conflicts"
+          element={
+            <RequirePerm permission="team">
+              <StockConflictsPage />
             </RequirePerm>
           }
         />

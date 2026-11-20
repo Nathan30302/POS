@@ -4,10 +4,18 @@ import { signToken, verifyPassword } from '../auth.js'
 import { requireAuth, type AuthedRequest } from '../middleware.js'
 import { effectivePermissions } from '../permissions.js'
 import { prisma } from '../prisma.js'
+import { rateLimit } from '../rateLimit.js'
 
 export const authRouter = Router()
 
-authRouter.post('/login', async (req, res) => {
+authRouter.post(
+  '/login',
+  rateLimit({
+    windowMs: 60_000,
+    max: 20,
+    key: (req) => String(req.body?.email || req.ip || 'login').toLowerCase(),
+  }),
+  async (req, res) => {
   const body = z
     .object({ email: z.string().email(), password: z.string().min(1) })
     .safeParse(req.body)

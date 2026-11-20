@@ -1,16 +1,26 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireBusiness, type AuthedRequest } from '../middleware.js'
+import {
+  requireAuth,
+  requireAnyPermission,
+  requireBusinessMember,
+  requirePermission,
+  writeAudit,
+  type AuthedRequest,
+} from '../middleware.js'
 import { prisma } from '../prisma.js'
 
 export const customersRouter = Router()
-customersRouter.use(requireAuth, requireBusiness)
+customersRouter.use(requireAuth, requireBusinessMember)
 
-customersRouter.get('/', async (req: AuthedRequest, res) => {
+customersRouter.get(
+  '/',
+  requireAnyPermission('customers', 'sell'),
+  async (req: AuthedRequest, res) => {
   const q = String(req.query.q || '').trim()
   const customers = await prisma.customer.findMany({
     where: {
-      businessId: req.auth!.businessId!,
+      businessId: req.businessId!,
       ...(q
         ? {
             OR: [
@@ -25,9 +35,10 @@ customersRouter.get('/', async (req: AuthedRequest, res) => {
     take: 200,
   })
   res.json({ customers })
-})
+},
+)
 
-customersRouter.post('/', async (req: AuthedRequest, res) => {
+customersRouter.post('/', requirePermission('customers'), async (req: AuthedRequest, res) => {
   const body = z
     .object({
       fullName: z.string().min(1),
@@ -41,7 +52,7 @@ customersRouter.post('/', async (req: AuthedRequest, res) => {
 
   const customer = await prisma.customer.create({
     data: {
-      businessId: req.auth!.businessId!,
+      businessId: req.businessId!,
       fullName: body.data.fullName.trim(),
       phone: body.data.phone?.trim() || null,
       email: body.data.email?.trim() || null,
@@ -52,7 +63,7 @@ customersRouter.post('/', async (req: AuthedRequest, res) => {
   res.status(201).json({ customer })
 })
 
-customersRouter.patch('/:id', async (req: AuthedRequest, res) => {
+customersRouter.patch('/:id', requirePermission('customers'), async (req: AuthedRequest, res) => {
   const body = z
     .object({
       fullName: z.string().min(1).optional(),
@@ -66,7 +77,7 @@ customersRouter.patch('/:id', async (req: AuthedRequest, res) => {
   if (!body.success) return res.status(400).json({ error: 'Invalid update' })
 
   const existing = await prisma.customer.findFirst({
-    where: { id: req.params.id, businessId: req.auth!.businessId! },
+    where: { id: req.params.id, businessId: req.businessId! },
   })
   if (!existing) return res.status(404).json({ error: 'Customer not found' })
 
@@ -93,9 +104,9 @@ customersRouter.patch('/:id', async (req: AuthedRequest, res) => {
   res.json({ customer })
 })
 
-customersRouter.delete('/:id', async (req: AuthedRequest, res) => {
+customersRouter.delete('/:id', requirePermission('customers'), async (req: AuthedRequest, res) => {
   const existing = await prisma.customer.findFirst({
-    where: { id: req.params.id, businessId: req.auth!.businessId! },
+    where: { id: req.params.id, businessId: req.businessId! },
   })
   if (!existing) return res.status(404).json({ error: 'Customer not found' })
   await prisma.customer.delete({ where: { id: existing.id } })

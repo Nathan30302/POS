@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Check, Moon, Settings2, Sparkles, Sun, Monitor } from 'lucide-react'
+import { Check, Moon, Settings2, Sparkles, Sun, Zap } from 'lucide-react'
+import { BranchSwitcher } from '@/components/BranchSwitcher'
 import { PageHero } from '@/components/PageHero'
 import { PhoneShopLink } from '@/components/PhoneShopLink'
 import { Button } from '@/components/ui/Button'
@@ -134,6 +135,15 @@ export function SettingsPage() {
         hint="Scan this QR on a phone · same Wi‑Fi · sign in · Sell"
       />
 
+      <section className="nx-card space-y-3 p-5 sm:p-6">
+        <h3 className="font-display text-lg font-bold">Branches</h3>
+        <p className="text-sm text-ink-soft">
+          Sales tag the active branch via <code className="text-xs">X-Branch-Id</code>.
+          Switch here or from the sidebar when you have more than one location.
+        </p>
+        <BranchSwitcher />
+      </section>
+
       <section className="nx-card space-y-5 p-5 sm:p-6">
         <div className="flex items-center gap-2">
           <Sparkles className="h-4 w-4 text-royal" />
@@ -144,30 +154,65 @@ export function SettingsPage() {
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-soft">
             Theme
           </p>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-3">
             {(
               [
-                ['light', 'Light', Sun],
-                ['dark', 'Dark', Moon],
-                ['system', 'System', Monitor],
+                {
+                  value: 'light' as const,
+                  label: 'Light',
+                  blurb: 'Bright counter · clean cards',
+                  Icon: Sun,
+                  swatch: 'from-[#f5f7fb] via-white to-[#e8eefc]',
+                  accent: 'bg-[#3563e9]',
+                },
+                {
+                  value: 'dark' as const,
+                  label: 'Dark',
+                  blurb: 'Calm night · low glare',
+                  Icon: Moon,
+                  swatch: 'from-[#0b1224] via-[#121a2f] to-[#1a2748]',
+                  accent: 'bg-[#4c7dff]',
+                },
+                {
+                  value: 'live' as const,
+                  label: 'Live Floor',
+                  blurb: 'Moving light · sheen · energy',
+                  Icon: Zap,
+                  swatch: 'from-[#060b18] via-[#152445] to-[#0e1730]',
+                  accent: 'bg-gradient-to-r from-[#5b8cff] to-[#2dd4bf]',
+                },
               ] as const
-            ).map(([value, label, Icon]) => (
+            ).map(({ value, label, blurb, Icon, swatch, accent }) => (
               <button
                 key={value}
                 type="button"
                 onClick={() => {
                   setTheme(value)
                   setThemePreference(value)
+                  if (value === 'live') setAmbient(true)
                   broadcastPrefs()
                 }}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-3 text-sm font-semibold transition ${
+                className={`overflow-hidden rounded-2xl border text-left transition ${
                   theme === value
-                    ? 'border-royal bg-royal/15 text-royal'
-                    : 'border-line bg-surface text-ink-soft hover:border-royal/40'
+                    ? 'border-royal ring-2 ring-royal/30'
+                    : 'border-line hover:border-royal/40'
                 }`}
               >
-                <Icon className="h-4 w-4" />
-                {label}
+                <div className={`relative h-16 bg-gradient-to-br ${swatch}`}>
+                  <span
+                    className={`absolute bottom-2 right-2 h-3 w-8 rounded-full ${accent}`}
+                  />
+                  {value === 'live' ? (
+                    <span className="live-pulse-dot absolute left-3 top-3 h-2.5 w-2.5 rounded-full bg-teal" />
+                  ) : null}
+                </div>
+                <div className="space-y-1 bg-card px-3 py-3">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                    <Icon className="h-3.5 w-3.5 text-royal" />
+                    {label}
+                  </p>
+                  <p className="text-[11px] leading-snug text-ink-soft">{blurb}</p>
+                </div>
               </button>
             ))}
           </div>
@@ -175,10 +220,11 @@ export function SettingsPage() {
 
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-ink-soft">
-            Live atmosphere
+            Atmosphere
           </p>
           <button
             type="button"
+            disabled={theme === 'live'}
             onClick={() => {
               const next = !ambient
               setAmbient(next)
@@ -189,19 +235,25 @@ export function SettingsPage() {
               ambient
                 ? 'border-teal/40 bg-teal/10 text-ink'
                 : 'border-line bg-surface text-ink-soft'
-            }`}
+            } ${theme === 'live' ? 'opacity-90' : ''}`}
           >
-            <span>{ambient ? 'Live glow on' : 'Live glow off'}</span>
+            <span>
+              {theme === 'live'
+                ? 'Live Floor keeps motion on'
+                : ambient
+                  ? 'Floating glow on'
+                  : 'Floating glow off'}
+            </span>
             <span
               className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
                 ambient ? 'bg-emerald-500/20 text-emerald-600' : 'bg-line text-ink-soft'
               }`}
             >
-              {ambient ? 'Live' : 'Static'}
+              {ambient ? 'On' : 'Off'}
             </span>
           </button>
           <p className="mt-2 text-xs text-ink-soft">
-            Soft moving light behind Command, Pulse, and the rest of the workspace.
+            Orbs and dust behind the workspace. Live Floor always enables this.
           </p>
         </div>
 

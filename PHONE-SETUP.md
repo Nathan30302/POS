@@ -1,8 +1,16 @@
 # Phone Sell setup (HTTPS + LAN)
 
-Live barcode scanning needs a **secure context** (HTTPS or localhost). Phones on your shop Wi‑Fi cannot use `http://192.168.x.x` for the camera.
+**On this Mac:** use plain **http://localhost:5173** — no cert warning. Localhost is already a secure context, so Live scan works in Chrome/Safari on the same machine.
+
+Live barcode scanning on a **real phone** needs HTTPS (or localhost). Phones on shop Wi‑Fi cannot use `http://192.168.x.x` for the camera.
 
 **Recommended path:** staff sign in on a phone → open **Sell** → Live scan / catalogue. No PeerJS QR pairing required.
+
+To force Vite HTTPS locally (after mkcert):
+
+```bash
+NEXORA_HTTPS=1 npm run dev
+```
 
 ---
 

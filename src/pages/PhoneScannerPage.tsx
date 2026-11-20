@@ -294,7 +294,10 @@ export function PhoneScannerPage() {
         )}
 
         {liveOn && status === 'live' ? (
-          <div className="pointer-events-none absolute inset-x-8 top-[40%] z-10 h-40 -translate-y-1/2 rounded-3xl border-[3px] border-teal-300" />
+          <div className="pointer-events-none absolute inset-x-[9%] top-1/2 z-10 h-[30%] -translate-y-1/2">
+            <div className="h-full rounded-3xl border-[3px] border-teal-300 shadow-[0_0_0_999px_rgba(0,0,0,0.38)]" />
+            <div className="absolute inset-x-8 top-1/2 h-0.5 -translate-y-1/2 bg-teal-300/85" />
+          </div>
         ) : null}
 
         <div className="absolute inset-x-0 bottom-0 z-30 bg-gradient-to-t from-black via-black/70 to-transparent px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-16">
@@ -311,7 +314,9 @@ export function PhoneScannerPage() {
               ? 'Opening camera…'
               : liveOn && error
                 ? error
-                : flash}
+                : liveOn && status === 'live' && flashTone === 'idle'
+                  ? 'Hold barcode in the box'
+                  : flash}
           </p>
 
           {manualOpen ? (

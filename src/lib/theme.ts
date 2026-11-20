@@ -2,57 +2,79 @@ const THEME_KEY = 'nexora-theme'
 const AMBIENT_KEY = 'nexora-ambient'
 const DENSITY_KEY = 'nexora-density'
 
-export type ThemeMode = 'light' | 'dark' | 'system'
+/** Three distinct looks — Live is the motion-heavy floor skin. */
+export type ThemeMode = 'light' | 'dark' | 'live'
 export type DensityMode = 'comfortable' | 'compact'
 
+function migrateTheme(raw: string | null): ThemeMode {
+  if (raw === 'light' || raw === 'dark' || raw === 'live') return raw
+  // Old "system" often looked identical to Light or Dark on the user's machine
+  if (raw === 'system') return 'live'
+  return 'light'
+}
+
 export function getThemePreference(): ThemeMode {
-  const stored = localStorage.getItem(THEME_KEY)
-  if (stored === 'dark' || stored === 'light' || stored === 'system') return stored
-  return 'system'
+  return migrateTheme(localStorage.getItem(THEME_KEY))
 }
 
-export function resolveTheme(pref: ThemeMode = getThemePreference()): 'light' | 'dark' {
-  if (pref === 'system') {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-      ? 'dark'
-      : 'light'
-  }
-  return pref
+export function resolveTheme(
+  pref: ThemeMode = getThemePreference(),
+): 'light' | 'dark' {
+  // Live rides on the dark palette + live-theme motion classes
+  return pref === 'light' ? 'light' : 'dark'
 }
 
-/** @deprecated use getThemePreference / resolveTheme */
+/** Resolved light/dark for icons — Live counts as dark. */
 export function getTheme(): 'light' | 'dark' {
   return resolveTheme()
 }
 
-export function applyTheme(mode: ThemeMode | 'light' | 'dark' = getThemePreference()) {
-  const pref = mode === 'light' || mode === 'dark' || mode === 'system' ? mode : 'system'
-  const resolved = resolveTheme(pref === 'light' || pref === 'dark' || pref === 'system' ? pref : 'system')
+export function isLiveTheme(pref: ThemeMode = getThemePreference()) {
+  return pref === 'live'
+}
+
+export function applyTheme(mode: ThemeMode = getThemePreference()) {
+  const pref = migrateTheme(mode)
+  const resolved = resolveTheme(pref)
   document.documentElement.classList.toggle('dark', resolved === 'dark')
-  if (pref === 'light' || pref === 'dark' || pref === 'system') {
-    localStorage.setItem(THEME_KEY, pref)
-  }
+  document.documentElement.classList.toggle('live-theme', pref === 'live')
+  localStorage.setItem(THEME_KEY, pref)
 }
 
 export function setThemePreference(mode: ThemeMode) {
   localStorage.setItem(THEME_KEY, mode)
   applyTheme(mode)
+  // Live implies atmosphere on — that’s the point of the skin
+  if (mode === 'live') {
+    localStorage.setItem(AMBIENT_KEY, '1')
+    document.documentElement.classList.remove('ambient-off')
+  }
   return mode
 }
 
+/** Cycles Light → Dark → Live → Light so the header control hits every skin. */
 export function toggleTheme() {
-  const next = resolveTheme() === 'dark' ? 'light' : 'dark'
+  const current = getThemePreference()
+  const next: ThemeMode =
+    current === 'light' ? 'dark' : current === 'dark' ? 'live' : 'light'
   setThemePreference(next)
-  return next
+  return resolveTheme(next)
 }
 
 export function getAmbientEnabled() {
+  if (getThemePreference() === 'live') return true
   const stored = localStorage.getItem(AMBIENT_KEY)
   if (stored === '0') return false
   return true
 }
 
 export function setAmbientEnabled(on: boolean) {
+  // Live theme always keeps atmosphere
+  if (getThemePreference() === 'live') {
+    localStorage.setItem(AMBIENT_KEY, '1')
+    document.documentElement.classList.remove('ambient-off')
+    return true
+  }
   localStorage.setItem(AMBIENT_KEY, on ? '1' : '0')
   document.documentElement.classList.toggle('ambient-off', !on)
   return on

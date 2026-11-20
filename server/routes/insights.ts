@@ -1,10 +1,15 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireBusinessMember, type AuthRequest } from '../middleware.js'
+import {
+  requireAuth,
+  requireBusinessMember,
+  requirePermission,
+  type AuthRequest,
+} from '../middleware.js'
 import { prisma } from '../prisma.js'
 
 export const insightsRouter = Router()
-insightsRouter.use(requireAuth, requireBusinessMember)
+insightsRouter.use(requireAuth, requireBusinessMember, requirePermission('pulse'))
 
 insightsRouter.get('/', async (req: AuthRequest, res) => {
   const insights = await prisma.businessInsight.findMany({
@@ -428,4 +433,156 @@ insightsRouter.post('/refresh', async (req: AuthRequest, res) => {
   })
 
   res.json({ insights, generated: insights.length })
+})
+
+insightsRouter.patch('/:id/status', async (req: AuthRequest, res) => {
+  const body = z
+    .object({
+      status: z.enum(['new', 'in_progress', 'resolved', 'dismissed']),
+    })
+    .safeParse(req.body)
+  if (!body.success) return res.status(400).json({ error: 'Invalid status' })
+
+  const existing = await prisma.businessInsight.findFirst({
+    where: { id: req.params.id, businessId: req.businessId! },
+  })
+  if (!existing) return res.status(404).json({ error: 'Insight not found' })
+
+  const insight = await prisma.businessInsight.update({
+    where: { id: existing.id },
+    data: {
+      status: body.data.status,
+      active: body.data.status === 'dismissed' ? false : existing.active,
+    },
+  })
+  res.json({ insight })
+})
+
+/** Daily business briefing — generated from live tenant data (not fabricated). */
+insightsRouter.get('/briefing/today', async (req: AuthRequest, res) => {
+  const businessId = req.businessId!
+  const now = new Date()
+  const dateKey = now.toISOString().slice(0, 10)
+  const startToday = new Date(now)
+  startToday.setHours(0, 0, 0, 0)
+
+  const cached = await prisma.dailyBriefing.findUnique({
+    where: { businessId_dateKey: { businessId, dateKey } },
+  })
+  if (cached && req.query.refresh !== '1') {
+    return res.json({
+      briefing: JSON.parse(cached.payloadJson),
+      dateKey,
+      cached: true,
+    })
+  }
+
+  const [salesToday, products, customers, openConflicts, insights] =
+    await Promise.all([
+      prisma.sale.findMany({
+        where: {
+          businessId,
+          status: 'COMPLETED',
+          createdAt: { gte: startToday },
+        },
+        include: { items: true },
+      }),
+      prisma.product.findMany({ where: { businessId, active: true } }),
+      prisma.customer.findMany({
+        where: { businessId },
+        orderBy: { updatedAt: 'desc' },
+        take: 20,
+      }),
+      prisma.stockConflict.findMany({
+        where: { businessId, status: 'OPEN' },
+        take: 20,
+      }),
+      prisma.businessInsight.findMany({
+        where: { businessId, active: true, status: 'new' },
+        take: 10,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ])
+
+  const revenue = salesToday.reduce((s, x) => s + x.total, 0)
+  const profit = salesToday.reduce(
+    (s, sale) =>
+      s +
+      sale.items.reduce(
+        (a, i) => a + (i.lineTotal - i.costPrice * i.quantity),
+        0,
+      ),
+    0,
+  )
+  const productSales = new Map<string, number>()
+  for (const sale of salesToday) {
+    for (const item of sale.items) {
+      productSales.set(
+        item.productName,
+        (productSales.get(item.productName) || 0) + item.lineTotal,
+      )
+    }
+  }
+  const top = [...productSales.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+  const lowStock = products.filter((p) => p.stockQuantity <= p.lowStockThreshold)
+  const owed = customers
+    .filter((c) => c.balance > 0)
+    .reduce((s, c) => s + c.balance, 0)
+
+  const briefing = {
+    dateKey,
+    generatedAt: new Date().toISOString(),
+    salesCount: salesToday.length,
+    revenue,
+    grossProfit: profit,
+    topProducts: top.map(([name, amount]) => ({ name, amount })),
+    lowStock: lowStock.map((p) => ({
+      id: p.id,
+      name: p.name,
+      stock: p.stockQuantity,
+      threshold: p.lowStockThreshold,
+    })),
+    customerBalanceOwed: owed,
+    openStockConflicts: openConflicts.length,
+    recommendations: insights.map((i) => ({
+      id: i.id,
+      title: i.title,
+      summary: i.summary,
+      action: i.action,
+      severity: i.severity,
+      priority: i.priority,
+      status: i.status,
+    })),
+    note: 'Figures are calculated from completed sales and current catalogue — not forecasts.',
+  }
+
+  await prisma.dailyBriefing.upsert({
+    where: { businessId_dateKey: { businessId, dateKey } },
+    create: {
+      businessId,
+      dateKey,
+      payloadJson: JSON.stringify(briefing),
+    },
+    update: { payloadJson: JSON.stringify(briefing) },
+  })
+
+  res.json({ briefing, dateKey, cached: false })
+})
+
+insightsRouter.get('/briefing', async (req: AuthRequest, res) => {
+  const rows = await prisma.dailyBriefing.findMany({
+    where: { businessId: req.businessId! },
+    orderBy: { dateKey: 'desc' },
+    take: 30,
+  })
+  res.json({
+    briefings: rows.map((r) => ({
+      id: r.id,
+      dateKey: r.dateKey,
+      createdAt: r.createdAt,
+      payload: JSON.parse(r.payloadJson || '{}'),
+    })),
+  })
 })

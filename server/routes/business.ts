@@ -1,10 +1,16 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireBusiness, type AuthedRequest } from '../middleware.js'
+import {
+  requireAuth,
+  requireBusinessMember,
+  requireManager,
+  writeAudit,
+  type AuthedRequest,
+} from '../middleware.js'
 import { prisma } from '../prisma.js'
 
 export const businessRouter = Router()
-businessRouter.use(requireAuth, requireBusiness)
+businessRouter.use(requireAuth, requireBusinessMember)
 
 function startOfDay(d = new Date()) {
   const x = new Date(d)
@@ -27,7 +33,7 @@ function pctChange(current: number, previous: number) {
 
 businessRouter.get('/me', async (req: AuthedRequest, res) => {
   const business = await prisma.business.findUnique({
-    where: { id: req.auth!.businessId! },
+    where: { id: req.businessId! },
     include: { branches: true },
   })
   if (!business) return res.status(404).json({ error: 'Business not found' })
@@ -41,10 +47,7 @@ businessRouter.get('/me', async (req: AuthedRequest, res) => {
   })
 })
 
-businessRouter.patch('/me', async (req: AuthedRequest, res) => {
-  if (!['OWNER', 'ADMIN'].includes(req.auth!.role || '')) {
-    return res.status(403).json({ error: 'Owner/admin only' })
-  }
+businessRouter.patch('/me', requireManager, async (req: AuthedRequest, res) => {
   const body = z
     .object({
       name: z.string().optional(),
@@ -60,7 +63,7 @@ businessRouter.patch('/me', async (req: AuthedRequest, res) => {
   if (!body.success) return res.status(400).json({ error: 'Invalid payload' })
 
   const current = await prisma.business.findUnique({
-    where: { id: req.auth!.businessId! },
+    where: { id: req.businessId! },
   })
   if (!current) return res.status(404).json({ error: 'Business not found' })
 
@@ -86,11 +89,19 @@ businessRouter.patch('/me', async (req: AuthedRequest, res) => {
         : current.receiptJson,
     },
   })
+  await writeAudit('business.update', {
+    businessId: current.id,
+    userId: req.auth!.sub,
+    entity: 'Business',
+    entityId: current.id,
+    before: { name: current.name, phone: current.phone },
+    after: { name: business.name, phone: business.phone },
+  })
   res.json({ business })
 })
 
-businessRouter.get('/dashboard', async (req: AuthedRequest, res) => {
-  const businessId = req.auth!.businessId!
+businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res) => {
+  const businessId = req.businessId!
   const today = startOfDay()
   const thisMonth = startOfMonth()
   const lastMonth = addMonths(thisMonth, -1)

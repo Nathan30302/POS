@@ -9,15 +9,15 @@ import {
   effectivePermissions,
 } from '../permissions.js'
 import {
-  audit,
   requireAuth,
-  requireBusiness,
+  requireBusinessMember,
+  writeAudit,
   type AuthedRequest,
 } from '../middleware.js'
 import { prisma } from '../prisma.js'
 
 export const teamRouter = Router()
-teamRouter.use(requireAuth, requireBusiness)
+teamRouter.use(requireAuth, requireBusinessMember)
 
 const staffRoles = z.enum([
   'ADMIN',
@@ -30,13 +30,15 @@ const staffRoles = z.enum([
 ])
 
 function requireManager(req: AuthedRequest, res: import('express').Response) {
-  const role = (req.auth?.role || req.membershipRole || '') as MembershipRole
+  const role = (req.membershipRole || req.auth?.role || '') as MembershipRole
   if (!MANAGER_ROLES.includes(role)) {
     res.status(403).json({ error: 'Owner or admin only' })
     return false
   }
   return true
 }
+
+// Prefer DB-backed manager gate on mutating routes via requireManagerMw where composed.
 
 teamRouter.get('/roles', (_req, res) => {
   res.json({
@@ -58,7 +60,7 @@ teamRouter.get('/', async (req: AuthedRequest, res) => {
   if (!requireManager(req, res)) return
 
   const members = await prisma.membership.findMany({
-    where: { businessId: req.auth!.businessId! },
+    where: { businessId: req.businessId! },
     include: {
       user: {
         select: {
@@ -110,7 +112,7 @@ teamRouter.post('/', async (req: AuthedRequest, res) => {
   }
 
   const email = body.data.email.toLowerCase().trim()
-  const businessId = req.auth!.businessId!
+  const businessId = req.businessId!
 
   const platformClash = await prisma.platformUser.findUnique({ where: { email } })
   if (platformClash) {
@@ -189,7 +191,7 @@ teamRouter.post('/', async (req: AuthedRequest, res) => {
     return membership
   })
 
-  await audit('team.member_created', {
+  await writeAudit('team.member_created', {
     businessId,
     userId: req.auth!.sub,
     entity: 'Membership',
@@ -229,7 +231,7 @@ teamRouter.patch('/:membershipId', async (req: AuthedRequest, res) => {
   const membership = await prisma.membership.findFirst({
     where: {
       id: req.params.membershipId,
-      businessId: req.auth!.businessId!,
+      businessId: req.businessId!,
     },
     include: { user: true },
   })
@@ -300,8 +302,8 @@ teamRouter.patch('/:membershipId', async (req: AuthedRequest, res) => {
     })
   })
 
-  await audit('team.member_updated', {
-    businessId: req.auth!.businessId!,
+  await writeAudit('team.member_updated', {
+    businessId: req.businessId!,
     userId: req.auth!.sub,
     entity: 'Membership',
     entityId: membership.id,
@@ -325,7 +327,7 @@ teamRouter.delete('/:membershipId', async (req: AuthedRequest, res) => {
   const membership = await prisma.membership.findFirst({
     where: {
       id: req.params.membershipId,
-      businessId: req.auth!.businessId!,
+      businessId: req.businessId!,
     },
   })
   if (!membership) return res.status(404).json({ error: 'Team member not found' })
@@ -345,8 +347,8 @@ teamRouter.delete('/:membershipId', async (req: AuthedRequest, res) => {
     data: { active: false },
   })
 
-  await audit('team.member_deactivated', {
-    businessId: req.auth!.businessId!,
+  await writeAudit('team.member_deactivated', {
+    businessId: req.businessId!,
     userId: req.auth!.sub,
     entity: 'Membership',
     entityId: membership.id,

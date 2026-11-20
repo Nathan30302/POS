@@ -75,6 +75,21 @@ async function main() {
     });
   }
 
+  let eastBranch = await prisma.branch.findFirst({
+    where: { businessId: business.id, code: 'EAST' },
+  });
+  if (!eastBranch) {
+    eastBranch = await prisma.branch.create({
+      data: {
+        businessId: business.id,
+        name: 'East Park kiosk',
+        code: 'EAST',
+        isMain: false,
+        address: 'East Park Mall, Lusaka',
+      },
+    });
+  }
+
   const owner = await prisma.user.upsert({
     where: { email: 'owner@demo.shop' },
     update: {

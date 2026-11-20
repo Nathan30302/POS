@@ -1,3 +1,5 @@
+import { getActiveBranchId } from '@/lib/branch'
+
 /** Same-origin `/api` so phones on Wi‑Fi work (Vite proxies to the API). */
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -33,6 +35,8 @@ export async function api<T>(
   }
   const token = getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
+  const branchId = getActiveBranchId()
+  if (branchId) headers.set('X-Branch-Id', branchId)
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
   const data = await res.json().catch(() => ({}))

@@ -1,10 +1,12 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
+  AlertTriangle,
   Boxes,
   LayoutDashboard,
   LogOut,
   Moon,
   Receipt,
+  ScrollText,
   Settings,
   Shield,
   Sparkles,
@@ -14,7 +16,9 @@ import {
   Warehouse,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { BranchSwitcher } from '@/components/BranchSwitcher'
 import { LiveAmbient } from '@/components/LiveSkyScene'
+import { OnlineStatus } from '@/components/OnlineStatus'
 import { useAuth } from '@/context/AuthContext'
 import {
   canSeeCommand,
@@ -27,6 +31,8 @@ import {
   applyAllPreferences,
   getAmbientEnabled,
   getTheme,
+  getThemePreference,
+  isLiveTheme,
   toggleTheme,
 } from '@/lib/theme'
 
@@ -44,6 +50,13 @@ const links: Array<{
   { to: '/app/insights', label: 'Pulse', icon: Sparkles, permission: 'pulse' },
   { to: '/app/barcodes', label: 'Labels', icon: Boxes, permission: 'labels' },
   { to: '/app/team', label: 'Team', icon: Shield, permission: 'team' },
+  { to: '/app/audit', label: 'Audit', icon: ScrollText, permission: 'team' },
+  {
+    to: '/app/conflicts',
+    label: 'Conflicts',
+    icon: AlertTriangle,
+    permission: 'team',
+  },
   { to: '/app/settings', label: 'Settings', icon: Settings, permission: null },
 ]
 
@@ -51,6 +64,7 @@ export function NexoraShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const [theme, setTheme] = useState(getTheme())
+  const [liveOn, setLiveOn] = useState(isLiveTheme())
   const [ambientOn, setAmbientOn] = useState(getAmbientEnabled())
   const [now, setNow] = useState(() => new Date())
 
@@ -58,6 +72,7 @@ export function NexoraShell() {
     applyAllPreferences()
     setAmbientOn(getAmbientEnabled())
     setTheme(getTheme())
+    setLiveOn(isLiveTheme())
   }, [])
 
   useEffect(() => {
@@ -68,6 +83,7 @@ export function NexoraShell() {
   useEffect(() => {
     const sync = () => {
       setTheme(getTheme())
+      setLiveOn(isLiveTheme(getThemePreference()))
       setAmbientOn(getAmbientEnabled())
     }
     window.addEventListener('storage', sync)
@@ -129,13 +145,22 @@ export function NexoraShell() {
               </p>
             </div>
           </div>
+          <OnlineStatus />
           <button
             type="button"
             className="rounded-xl border border-line px-2.5 py-2 text-ink-soft"
-            onClick={() => setTheme(toggleTheme())}
-            aria-label="Toggle theme"
+            onClick={() => {
+              setTheme(toggleTheme())
+              setLiveOn(isLiveTheme())
+              setAmbientOn(getAmbientEnabled())
+              window.dispatchEvent(new Event('nexora-prefs'))
+            }}
+            aria-label="Cycle theme"
+            title="Light → Dark → Live Floor"
           >
-            {theme === 'dark' ? (
+            {liveOn ? (
+              <Sparkles className="h-4 w-4 text-teal" />
+            ) : theme === 'dark' ? (
               <Sun className="h-4 w-4" />
             ) : (
               <Moon className="h-4 w-4" />
@@ -182,6 +207,9 @@ export function NexoraShell() {
                     minute: '2-digit',
                   })}
                 </p>
+              </div>
+              <div className="mt-3">
+                <BranchSwitcher compact />
               </div>
               {user?.role !== 'OWNER' && user?.role !== 'ADMIN' ? (
                 <div className="mt-3 border-t border-line/70 pt-2.5">
@@ -230,14 +258,28 @@ export function NexoraShell() {
             <button
               type="button"
               className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-ink-soft hover:bg-brand-soft"
-              onClick={() => setTheme(toggleTheme())}
+              onClick={() => {
+                setTheme(toggleTheme())
+                setLiveOn(isLiveTheme())
+                setAmbientOn(getAmbientEnabled())
+                window.dispatchEvent(new Event('nexora-prefs'))
+              }}
             >
-              {theme === 'dark' ? (
+              {liveOn ? (
+                <Sparkles className="h-4 w-4 text-teal" />
+              ) : theme === 'dark' ? (
                 <Sun className="h-4 w-4" />
               ) : (
                 <Moon className="h-4 w-4" />
               )}
-              {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              {liveOn
+                ? 'Live Floor'
+                : theme === 'dark'
+                  ? 'Dark mode'
+                  : 'Light mode'}
+              <span className="ml-auto text-[10px] uppercase tracking-wide text-ink-soft">
+                tap to cycle
+              </span>
             </button>
             <button
               type="button"

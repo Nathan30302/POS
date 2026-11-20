@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "vite --host --port 5173",
-    "dev:api": "tsx watch server/index.ts",
+    "dev:api": "node --import tsx server/index.ts",
+    "dev:api:watch": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",

@@ -18,7 +18,11 @@ export type AuthRequest = Request & {
   auth?: TokenPayload
   user?: TokenPayload
   businessId?: string
+  branchId?: string
   membershipRole?: MembershipRole | string
+  /** Effective permissions from live membership (set by requirePermission / member load). */
+  permissions?: string[]
+  membershipId?: string
 }
 
 const secret = () => {

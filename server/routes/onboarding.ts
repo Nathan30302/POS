@@ -1,16 +1,17 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { requireAuth, requireBusiness, type AuthedRequest } from '../middleware.js'
+import {
+  requireAuth,
+  requireBusinessMember,
+  requireManager,
+  type AuthedRequest,
+} from '../middleware.js'
 import { prisma } from '../prisma.js'
 
 export const onboardingRouter = Router()
-onboardingRouter.use(requireAuth, requireBusiness)
+onboardingRouter.use(requireAuth, requireBusinessMember, requireManager)
 
 onboardingRouter.post('/complete', async (req: AuthedRequest, res) => {
-  if (!['OWNER', 'ADMIN'].includes(req.auth!.role || '')) {
-    return res.status(403).json({ error: 'Owner/admin only' })
-  }
-
   const body = z
     .object({
       name: z.string().min(2).optional(),
@@ -26,7 +27,7 @@ onboardingRouter.post('/complete', async (req: AuthedRequest, res) => {
   if (!body.success) return res.status(400).json({ error: 'Invalid onboarding data' })
 
   const current = await prisma.business.findUnique({
-    where: { id: req.auth!.businessId! },
+    where: { id: req.businessId! },
   })
   if (!current) return res.status(404).json({ error: 'Business not found' })
 
