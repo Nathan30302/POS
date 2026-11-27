@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { ProductPhoto } from '@/components/ProductPhoto'
 import { formatZMW } from '@/lib/money'
 import type { Product } from '@/types/database'
 
@@ -57,40 +58,51 @@ export function CatalogueTile({ product, inCart, onAdd }: Props) {
         }
         onAdd(product.id, 1)
       }}
-      className={`relative touch-manipulation select-none rounded-xl border px-3 py-3 text-left transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 ${
+      className={`group relative touch-manipulation select-none overflow-hidden rounded-2xl border text-left transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-45 ${
         inCart
-          ? 'border-royal/40 bg-royal/10 hover:bg-royal/15'
-          : 'border-line hover:border-brand hover:bg-brand-soft/40'
+          ? 'border-royal/50 bg-royal/10 shadow-md shadow-royal/10'
+          : 'border-line bg-card hover:border-royal/35 hover:shadow-md'
       }`}
     >
       {inCart > 0 ? (
-        <span className="absolute right-2 top-2 inline-flex min-w-6 items-center justify-center rounded-full bg-royal px-1.5 py-0.5 text-[11px] font-bold text-white">
-          {inCart}
+        <span className="absolute right-2 top-2 z-10 inline-flex min-w-7 items-center justify-center rounded-full bg-royal px-2 py-1 text-xs font-bold text-white shadow">
+          ×{inCart}
         </span>
       ) : null}
-      {product.image_url ? (
-        <img
+
+      <div className="relative aspect-[4/3] w-full overflow-hidden bg-surface">
+        <ProductPhoto
           src={product.image_url}
-          alt=""
-          className="pointer-events-none mb-2 h-16 w-full rounded-lg object-cover bg-surface"
-          loading="lazy"
-          draggable={false}
+          name={product.name}
+          category={product.category}
+          className="pointer-events-none h-full w-full"
+          imgClassName="transition duration-300 group-hover:scale-[1.03]"
         />
-      ) : (
-        <div className="mb-2 flex h-12 items-center justify-center rounded-lg bg-surface text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-          {product.category}
+        {low && !out ? (
+          <span className="absolute bottom-2 left-2 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+            Low stock
+          </span>
+        ) : null}
+        {out ? (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-sm font-bold text-white">
+            Out of stock
+          </span>
+        ) : null}
+      </div>
+
+      <div className="space-y-1 px-2.5 py-2 sm:px-3 sm:py-2.5">
+        <p className="line-clamp-2 min-h-[2.4rem] text-[13px] font-semibold leading-snug text-ink sm:text-sm">
+          {product.name}
+        </p>
+        <div className="flex items-end justify-between gap-2">
+          <p className="font-display text-[0.95rem] font-bold tabular-nums text-brand sm:text-base">
+            {formatZMW(product.selling_price)}
+          </p>
+          <p className="text-[11px] tabular-nums text-ink-soft">
+            {out ? '—' : `${product.stock_quantity} left`}
+          </p>
         </div>
-      )}
-      <p className="line-clamp-2 text-sm font-medium text-ink">{product.name}</p>
-      <p className="mt-1 text-sm font-semibold text-brand">
-        {formatZMW(product.selling_price)}
-      </p>
-      <p className="mt-0.5 text-[11px] text-ink-soft">
-        {out
-          ? 'Out of stock'
-          : `Stock ${product.stock_quantity}${low ? ' · low' : ''}`}
-      </p>
-      <p className="mt-1 text-[10px] text-ink-soft/70">Hold +5</p>
+      </div>
     </button>
   )
 }

@@ -14,7 +14,7 @@ import {
 import { playLinkBeep, unlockAudio } from '@/lib/sounds'
 
 type Props = {
-  onScan: (code: string) => ScanResult
+  onScan: (code: string, intent?: 'add' | 'remove') => ScanResult
   onClose: () => void
   onStatusChange?: (status: 'waiting' | 'connected' | 'error') => void
 }
@@ -96,7 +96,10 @@ export function PhonePairPanel({ onScan, onClose, onStatusChange }: Props) {
         }
         if (data?.type === 'barcode' && data.code) {
           setLastCode(data.code)
-          const result = onScanRef.current(data.code)
+          const result = onScanRef.current(
+            data.code,
+            data.intent === 'remove' ? 'remove' : 'add',
+          )
           setLastResult(result.message)
           connection.send({
             type: 'ack',
@@ -156,8 +159,7 @@ export function PhonePairPanel({ onScan, onClose, onStatusChange }: Props) {
             Phone scanner
           </p>
           <p className="mt-1 text-sm text-ink-soft">
-            No phone login. Staff scan the QR, tap Scan product, and items land
-            in this cart.
+            Scan the QR on a phone — barcodes add to this cart.
           </p>
         </div>
         <button
@@ -236,27 +238,23 @@ export function PhonePairPanel({ onScan, onClose, onStatusChange }: Props) {
             </p>
           </div>
 
-          <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-soft">
-            <li>Phone + laptop on the same Wi‑Fi</li>
-            <li>Scan this QR (no sign-in on the phone)</li>
-            <li>
-              Tap <strong>Scan product</strong> — barcode adds here with a ting
-            </li>
-          </ol>
-          <p className="text-xs text-ink-soft">
-            Easier option: open NEXORA on the phone, sign in, go to{' '}
-            <strong>Sell</strong> — catalogue + camera, sales sync to the shop
-            (no QR needed).
-          </p>
         </>
       ) : (
-        <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-5 text-center">
+        <div className="space-y-3 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-5 text-center">
           <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200">
-            Phone is live as your barcode gun
+            Phone linked
           </p>
-          <p className="mt-1 text-xs text-ink-soft">
-            Keep scanning on the phone. You can keep selling on this screen.
-          </p>
+          {lastResult ? (
+            <div className="rounded-xl bg-card px-3 py-3 text-left shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+                Just scanned
+              </p>
+              <p className="mt-1 text-sm font-bold text-ink">{lastResult}</p>
+              {lastCode ? (
+                <p className="mt-0.5 font-mono text-xs text-ink-soft">{lastCode}</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

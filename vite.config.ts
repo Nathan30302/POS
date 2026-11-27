@@ -32,11 +32,25 @@ if (wantHttps) {
 }
 
 const apiPort = process.env.API_PORT || process.env.PORT || '4000'
-const proxy = {
-  '/api': {
-    target: `http://127.0.0.1:${apiPort}`,
-    changeOrigin: true,
+
+/** Keep browser Host/Origin usable for cookie CSRF behind Cloudflare tunnels. */
+const apiProxy = {
+  target: `http://127.0.0.1:${apiPort}`,
+  // Keep the public Host (e.g. *.trycloudflare.com) so CSRF can match Origin
+  changeOrigin: false,
+  configure(proxy: { on: (event: 'proxyReq', listener: (...args: any[]) => void) => void }) {
+    proxy.on('proxyReq', (proxyReq: { setHeader: (k: string, v: string) => void }, req: { headers: Record<string, unknown> }) => {
+      const host = String(req.headers.host || '')
+      if (host) proxyReq.setHeader('X-Forwarded-Host', host)
+      const proto = String(req.headers['x-forwarded-proto'] || 'https')
+      proxyReq.setHeader('X-Forwarded-Proto', proto)
+    })
   },
+}
+
+const proxy = {
+  '/api': apiProxy,
+  '/uploads': apiProxy,
 }
 
 export default defineConfig({
@@ -46,15 +60,37 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    target: 'es2022',
+    cssCodeSplit: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/jspdf')) return 'vendor-jspdf'
+          if (id.includes('node_modules/@zxing')) return 'vendor-zxing'
+          if (id.includes('node_modules/peerjs')) return 'vendor-peer'
+          if (id.includes('node_modules/qrcode')) return 'vendor-qrcode'
+          if (id.includes('node_modules/jsbarcode')) return 'vendor-jsbarcode'
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react-router')) {
+            return 'vendor-react'
+          }
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     host: true,
+    // Phones hit LAN IPs / Cloudflare hostnames — don't 403 them
+    allowedHosts: true,
     https,
     proxy,
   },
   preview: {
     port: 5173,
     host: true,
+    allowedHosts: true,
     https,
     proxy,
   },

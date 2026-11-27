@@ -1,0 +1,16 @@
+Live theme background loops (royalty-free stock):
+
+- live-city.mp4 / live-city.jpg
+  Dubai skyscrapers and highway
+  Mixkit #28641
+  https://mixkit.co/free-stock-video/dubai-skyscrapers-and-highway-28641/
+  CDN fallback: https://assets.mixkit.co/videos/28641/28641-720.mp4
+
+- live-streets.mp4 / live-streets.jpg
+  Aerial view of Johannesburg city skyline (Southern Africa)
+  Pexels #33637719
+  https://www.pexels.com/video/aerial-view-of-johannesburg-city-skyline-33637719/
+  CDN fallback: https://videos.pexels.com/video-files/33637719/14294796_3840_2160_24fps.mp4
+
+Compressed locally to ~5s muted 720p loops for offline/LAN use.
+Paths are wired from src/lib/theme.ts → LIVE_VIDEO_CLIPS (one file replace = new atmosphere).

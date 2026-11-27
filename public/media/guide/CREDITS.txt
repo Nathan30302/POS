@@ -1,0 +1,8 @@
+Operator training clips for NEXORA How-to guide (/guide, /app/guide):
+
+- guide-day-start.mp4 — opening the shop day
+- guide-sell-scan.mp4 — sell & barcode scan
+- guide-inventory.mp4 — stock / receiving
+- guide-trust-watch.mp4 — owner Trust / leak watch
+
+Generated for NEXORA operator training.

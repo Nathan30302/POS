@@ -1,28 +1,39 @@
 import { useMemo, useState } from 'react'
-import {
-  PackagePlus,
-  Pencil,
-  Search,
-  Trash2,
-  PackageOpen,
-} from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { History, PackagePlus, PackageOpen } from 'lucide-react'
+import { CsvImportPanel } from '@/components/CsvImportPanel'
 import { EmptyState, LoadingBlock, StatChip } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
+import { ProductCard } from '@/components/ProductCard'
+import {
+  MetricTile,
+  ToolbarCard,
+  ToolbarSearch,
+  ToolbarSelect,
+} from '@/components/ToolbarSearch'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
 import { Input } from '@/components/ui/Input'
 import { Modal } from '@/components/ui/Modal'
 import { useProducts } from '@/hooks/useProducts'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
+import {
+  categoriesForUser,
+  hasLotModule,
+  lotNavLabel,
+} from '@/lib/industry'
 import { formatZMW } from '@/lib/money'
 import type { Product, ProductInput } from '@/types/database'
-import { PRODUCT_CATEGORIES } from '@/types/database'
 import { ProductForm } from './ProductForm'
 
 export function ProductsPage() {
-  const { isOwnerLike: isOwner, can } = useAuth()
+  const { user, isOwnerLike: isOwner, can } = useAuth()
   const canManageInventory = can('inventory')
   const canReceiveStock = can('receive_stock')
+  const showLots = hasLotModule(user)
+  const lotsLabel = lotNavLabel(user)
+  const categoryOptions = categoriesForUser(user)
   const {
     products,
     loading,
@@ -40,9 +51,28 @@ export function ProductsPage() {
   const [deleting, setDeleting] = useState<Product | null>(null)
   const [receiving, setReceiving] = useState<Product | null>(null)
   const [receiveQty, setReceiveQty] = useState(10)
+  const [receiveLot, setReceiveLot] = useState('')
+  const [receiveExpiry, setReceiveExpiry] = useState('')
+  const [historyFor, setHistoryFor] = useState<Product | null>(null)
+  const [movements, setMovements] = useState<
+    Array<{
+      id: string
+      type: string
+      quantity: number
+      note: string | null
+      createdAt: string
+    }>
+  >([])
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [busyDelete, setBusyDelete] = useState(false)
   const [busyReceive, setBusyReceive] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [actionOk, setActionOk] = useState('')
+
+  function flashOk(message: string) {
+    setActionOk(message)
+    window.setTimeout(() => setActionOk(''), 2200)
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -61,9 +91,18 @@ export function ProductsPage() {
   const lowStockCount = products.filter(
     (p) => p.stock_quantity <= p.low_stock_threshold,
   ).length
+  const stockAtCost = products.reduce(
+    (s, p) => s + p.cost_price * p.stock_quantity,
+    0,
+  )
+  const stockAtSell = products.reduce(
+    (s, p) => s + p.selling_price * p.stock_quantity,
+    0,
+  )
 
   async function handleSave(input: ProductInput) {
     setActionError('')
+    const wasEdit = Boolean(editing)
     if (editing) {
       await updateProduct(editing.id, input)
     } else {
@@ -71,6 +110,7 @@ export function ProductsPage() {
     }
     setEditorOpen(false)
     setEditing(null)
+    flashOk(wasEdit ? 'Product updated.' : 'Product added.')
   }
 
   async function confirmDelete() {
@@ -80,6 +120,7 @@ export function ProductsPage() {
     try {
       await deleteProduct(deleting.id)
       setDeleting(null)
+      flashOk('Product deleted.')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Delete failed')
     } finally {
@@ -92,13 +133,29 @@ export function ProductsPage() {
     setBusyReceive(true)
     setActionError('')
     try {
-      await api(`/products/${receiving.id}/receive`, {
-        method: 'POST',
-        body: JSON.stringify({ quantity: receiveQty }),
-      })
+      const useLot = receiveLot.trim() && receiveExpiry
+      if (useLot) {
+        await api('/pharmacy/receive', {
+          method: 'POST',
+          body: JSON.stringify({
+            productId: receiving.id,
+            quantity: receiveQty,
+            lotNumber: receiveLot.trim(),
+            expiryDate: new Date(receiveExpiry).toISOString(),
+          }),
+        })
+      } else {
+        await api(`/products/${receiving.id}/receive`, {
+          method: 'POST',
+          body: JSON.stringify({ quantity: receiveQty }),
+        })
+      }
       await refresh()
       setReceiving(null)
       setReceiveQty(10)
+      setReceiveLot('')
+      setReceiveExpiry('')
+      flashOk(useLot ? 'Lot received (FEFO).' : 'Stock received.')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Receive failed')
     } finally {
@@ -106,17 +163,41 @@ export function ProductsPage() {
     }
   }
 
+  async function openHistory(product: Product) {
+    setHistoryFor(product)
+    setHistoryLoading(true)
+    setActionError('')
+    try {
+      const data = await api<{
+        movements: Array<{
+          id: string
+          type: string
+          quantity: number
+          note: string | null
+          createdAt: string
+        }>
+      }>(`/products/${product.id}/movements`)
+      setMovements(data.movements)
+    } catch (err) {
+      setMovements([])
+      setActionError(
+        err instanceof Error ? err.message : 'Could not load movements',
+      )
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-5">
       <PageHero
         eyebrow="Inventory · catalogue"
         title="Stock & catalogue"
-        subtitle="Prices, barcodes, and stock — use Voice fill to speak name, rate, and barcode."
+        subtitle="Search, receive, and keep the till’s live catalogue honest."
         actions={
           canManageInventory ? (
             <Button
               type="button"
-              className="bg-[#3563E9] hover:bg-[#2f58d4]"
               onClick={() => {
                 setEditing(null)
                 setEditorOpen(true)
@@ -129,49 +210,86 @@ export function ProductsPage() {
         }
       />
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_220px_auto]">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search name, barcode, or SKU…"
-            className="w-full rounded-xl border border-line bg-card py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15"
-          />
-        </div>
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-4 focus:ring-brand/15"
-        >
-          <option value="All">All categories</option>
-          {PRODUCT_CATEGORIES.map((item) => (
-            <option key={item} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-        <div className="flex gap-2">
-          <Button type="button" variant="secondary" onClick={() => void refresh()}>
-            Refresh
-          </Button>
-        </div>
-      </div>
+      {canManageInventory ? (
+        <section className="nx-card p-4 sm:p-5">
+          <CsvImportPanel onDone={() => void refresh()} />
+        </section>
+      ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        <StatChip value={products.length} label="in catalogue" tone="royal" />
-        <StatChip
-          value={lowStockCount}
-          label="low stock"
-          tone={lowStockCount > 0 ? 'warn' : 'ok'}
+      <div className="grid gap-2 sm:grid-cols-3">
+        <MetricTile label="Stock at cost" value={formatZMW(stockAtCost)} />
+        <MetricTile label="Stock at selling" value={formatZMW(stockAtSell)} />
+        <MetricTile
+          label="Shortcuts"
+          value={`${lowStockCount} low`}
+          hint={
+            <>
+              <Link to="/app/insights" className="font-semibold text-royal hover:underline">
+                Reorder
+              </Link>
+              {showLots ? (
+                <>
+                  {' · '}
+                  <Link
+                    to="/app/pharmacy"
+                    className="font-semibold text-royal hover:underline"
+                  >
+                    {lotsLabel}
+                  </Link>
+                </>
+              ) : null}
+              {' · '}
+              <Link to="/app/barcodes" className="font-semibold text-royal hover:underline">
+                Labels
+              </Link>
+            </>
+          }
         />
       </div>
 
+      <ToolbarCard>
+        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1.4fr)_minmax(11rem,0.7fr)_auto] sm:items-stretch">
+          <ToolbarSearch
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Name, barcode, SKU…"
+            aria-label="Search products"
+          />
+          <ToolbarSelect
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            aria-label="Filter category"
+          >
+            <option value="All">All categories</option>
+            {categoryOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </ToolbarSelect>
+          <Button
+            type="button"
+            variant="secondary"
+            className="min-h-11"
+            onClick={() => void refresh()}
+          >
+            Refresh
+          </Button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <StatChip value={products.length} label="in catalogue" tone="royal" />
+          <StatChip
+            value={lowStockCount}
+            label="low stock"
+            tone={lowStockCount > 0 ? 'warn' : 'ok'}
+          />
+        </div>
+      </ToolbarCard>
+
       {error || actionError ? (
-        <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-danger">
-          {error || actionError}
-        </p>
+        <FormBanner tone="error">{error || actionError}</FormBanner>
       ) : null}
+      {actionOk ? <FormBanner tone="ok">{actionOk}</FormBanner> : null}
 
       <div className="nx-card overflow-hidden">
         {loading ? (
@@ -201,120 +319,42 @@ export function ProductsPage() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-ink-soft">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Product</th>
-                  <th className="px-4 py-3 font-medium">Category</th>
-                  <th className="px-4 py-3 font-medium">Barcode / SKU</th>
-                  {isOwner ? (
-                    <th className="px-4 py-3 font-medium">Cost</th>
-                  ) : null}
-                  <th className="px-4 py-3 font-medium">Sell</th>
-                  <th className="px-4 py-3 font-medium">Stock</th>
-                  <th className="px-4 py-3 font-medium" />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((product) => {
-                  const low =
-                    product.stock_quantity <= product.low_stock_threshold
-                  return (
-                    <tr key={product.id} className="border-t border-line">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <div className="h-11 w-11 overflow-hidden rounded-xl bg-slate-100">
-                            {product.image_url ? (
-                              <img
-                                src={product.image_url}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                            ) : null}
-                          </div>
-                          <div>
-                            <p className="font-medium text-ink">{product.name}</p>
-                            {low ? (
-                              <p className="text-xs font-medium text-warn">
-                                Low stock
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-ink-soft">
-                        {product.category}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs text-ink-soft">
-                        <div>{product.barcode || '—'}</div>
-                        <div>{product.sku || '—'}</div>
-                      </td>
-                      {isOwner ? (
-                        <td className="px-4 py-3">
-                          {formatZMW(product.cost_price)}
-                        </td>
-                      ) : null}
-                      <td className="px-4 py-3 font-semibold">
-                        {formatZMW(product.selling_price)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                            low
-                              ? 'bg-amber-100 text-amber-900'
-                              : 'bg-emerald-50 text-emerald-800'
-                          }`}
-                        >
-                          {product.stock_quantity}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex justify-end gap-1">
-                          {canReceiveStock ? (
-                            <button
-                              type="button"
-                              className="rounded-lg p-2 text-ink-soft hover:bg-brand-soft/60 hover:text-brand"
-                              onClick={() => {
-                                setReceiving(product)
-                                setReceiveQty(10)
-                              }}
-                              aria-label={`Receive stock for ${product.name}`}
-                              title="Receive stock"
-                            >
-                              <PackageOpen className="h-4 w-4" />
-                            </button>
-                          ) : null}
-                          {canManageInventory ? (
-                            <>
-                              <button
-                                type="button"
-                                className="rounded-lg p-2 text-ink-soft hover:bg-slate-100 hover:text-ink"
-                                onClick={() => {
-                                  setEditing(product)
-                                  setEditorOpen(true)
-                                }}
-                                aria-label={`Edit ${product.name}`}
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-lg p-2 text-ink-soft hover:bg-red-50 hover:text-danger"
-                                onClick={() => setDeleting(product)}
-                                aria-label={`Delete ${product.name}`}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-2 gap-2.5 p-2.5 sm:grid-cols-3 sm:gap-3 sm:p-4 lg:grid-cols-4">
+            {filtered.map((product) => {
+              const openProduct = canManageInventory
+                ? () => {
+                    setEditing(product)
+                    setEditorOpen(true)
+                  }
+                : undefined
+              return (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  showCost={isOwner}
+                  onOpen={openProduct}
+                  onReceive={
+                    canReceiveStock
+                      ? () => {
+                          setReceiving(product)
+                          setReceiveQty(10)
+                        }
+                      : undefined
+                  }
+                  onEdit={openProduct}
+                  onDelete={
+                    canManageInventory
+                      ? () => setDeleting(product)
+                      : undefined
+                  }
+                  onHistory={
+                    isOwner || canManageInventory
+                      ? () => void openHistory(product)
+                      : undefined
+                  }
+                />
+              )
+            })}
           </div>
         )}
       </div>
@@ -327,8 +367,13 @@ export function ProductsPage() {
             setEditing(null)
           }}
           wide
+          fullScreen={
+            typeof navigator !== 'undefined' &&
+            /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+          }
         >
           <ProductForm
+            key={editing?.id || 'new'}
             initial={editing}
             showCost={isOwner}
             onCancel={() => {
@@ -336,6 +381,26 @@ export function ProductsPage() {
               setEditing(null)
             }}
             onSubmit={handleSave}
+            onDelete={
+              editing
+                ? () => {
+                    const product = editing
+                    setEditorOpen(false)
+                    setEditing(null)
+                    setDeleting(product)
+                  }
+                : undefined
+            }
+            onHistory={
+              editing
+                ? () => {
+                    const product = editing
+                    setEditorOpen(false)
+                    setEditing(null)
+                    void openHistory(product)
+                  }
+                : undefined
+            }
           />
         </Modal>
       ) : null}
@@ -347,7 +412,7 @@ export function ProductsPage() {
             <strong className="text-ink">{receiving.name}</strong>. Current:{' '}
             <strong className="text-ink">{receiving.stock_quantity}</strong>
           </p>
-          <div className="mt-4">
+          <div className="mt-4 space-y-3">
             <Input
               label="Quantity received"
               type="number"
@@ -356,6 +421,26 @@ export function ProductsPage() {
               value={receiveQty}
               onChange={(e) => setReceiveQty(Number(e.target.value))}
             />
+            {showLots ? (
+              <>
+                <Input
+                  label={`Lot / batch # (${lotsLabel})`}
+                  value={receiveLot}
+                  onChange={(e) => setReceiveLot(e.target.value)}
+                  placeholder="Optional — enables FEFO"
+                />
+                <Input
+                  label="Expiry date (with lot)"
+                  type="date"
+                  value={receiveExpiry}
+                  onChange={(e) => setReceiveExpiry(e.target.value)}
+                />
+                <p className="text-[11px] text-ink-soft">
+                  Leave lot blank for plain stock. With lot + expiry, Sell uses
+                  soonest-expiry first.
+                </p>
+              </>
+            ) : null}
           </div>
           <div className="mt-5 flex justify-end gap-2">
             <Button
@@ -399,6 +484,51 @@ export function ProductsPage() {
               {busyDelete ? 'Deleting…' : 'Delete'}
             </Button>
           </div>
+        </Modal>
+      ) : null}
+
+      {historyFor ? (
+        <Modal
+          title={`Stock history · ${historyFor.name}`}
+          onClose={() => {
+            setHistoryFor(null)
+            setMovements([])
+          }}
+        >
+          {historyLoading ? (
+            <LoadingBlock label="Loading movements…" />
+          ) : movements.length === 0 ? (
+            <EmptyState
+              icon={History}
+              title="No movements yet"
+              body="Sales, receives, voids, and adjustments will appear here."
+            />
+          ) : (
+            <ul className="max-h-80 divide-y divide-line overflow-y-auto rounded-xl border border-line">
+              {movements.map((m) => (
+                <li
+                  key={m.id}
+                  className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="font-semibold text-ink">{m.type}</p>
+                    <p className="text-xs text-ink-soft">
+                      {m.note || '—'} ·{' '}
+                      {new Date(m.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 font-mono text-sm font-bold tabular-nums ${
+                      m.quantity < 0 ? 'text-danger' : 'text-emerald-700'
+                    }`}
+                  >
+                    {m.quantity > 0 ? '+' : ''}
+                    {m.quantity}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Modal>
       ) : null}
     </div>

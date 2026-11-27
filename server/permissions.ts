@@ -11,9 +11,17 @@ export const ALL_PERMISSIONS = [
   'void_sales',
   'receive_stock',
   'discounts',
+  'transfer_request',
+  'transfer_approve',
+  'transfer_receive',
+  'credit_sales',
+  'expenses',
 ] as const
 
 export type Permission = (typeof ALL_PERMISSIONS)[number]
+
+/** Expenses above this (ZMW) need owner/admin approval when status flow is used. */
+export const LARGE_EXPENSE_THRESHOLD = 5000
 
 export const ROLE_DEFAULTS: Record<MembershipRole, Permission[]> = {
   OWNER: [...ALL_PERMISSIONS],
@@ -27,11 +35,22 @@ export const ROLE_DEFAULTS: Record<MembershipRole, Permission[]> = {
     'void_sales',
     'receive_stock',
     'discounts',
+    'transfer_request',
+    'transfer_approve',
+    'transfer_receive',
+    'credit_sales',
+    'expenses',
   ],
-  ACCOUNTANT: ['ledger', 'pulse', 'customers'],
-  INVENTORY_MANAGER: ['inventory', 'labels', 'receive_stock'],
+  ACCOUNTANT: ['ledger', 'pulse', 'customers', 'expenses'],
+  INVENTORY_MANAGER: [
+    'inventory',
+    'labels',
+    'receive_stock',
+    'transfer_request',
+    'transfer_receive',
+  ],
   CASHIER: ['sell', 'labels'],
-  SALES: ['sell', 'customers', 'labels', 'discounts'],
+  SALES: ['sell', 'customers', 'labels', 'discounts', 'credit_sales'],
   CUSTOM: ['sell'],
 }
 

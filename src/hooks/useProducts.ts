@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import { usableImageUrl } from '@/lib/productPhoto'
 import type { Product, ProductInput } from '@/types/database'
 
 type ApiProduct = {
@@ -12,7 +13,13 @@ type ApiProduct = {
   sellingPrice: number
   stockQuantity: number
   lowStockThreshold: number
+  trackExpiry?: boolean
+  expiryDate?: string | null
+  requiresPrescription?: boolean
   imageUrl: string | null
+  preferredSupplierId?: string | null
+  preferredSupplier?: { id: string; name: string } | null
+  _count?: { batches?: number }
   createdAt: string
   updatedAt: string
 }
@@ -28,29 +35,37 @@ function mapProduct(p: ApiProduct): Product {
     selling_price: p.sellingPrice,
     stock_quantity: p.stockQuantity,
     low_stock_threshold: p.lowStockThreshold,
-    image_url: p.imageUrl,
+    image_url: usableImageUrl(p.imageUrl) || null,
+    preferred_supplier_id: p.preferredSupplierId || p.preferredSupplier?.id || null,
+    preferred_supplier_name: p.preferredSupplier?.name || null,
+    track_expiry: Boolean(p.trackExpiry),
+    expiry_date: p.expiryDate || null,
+    requires_prescription: Boolean(p.requiresPrescription),
+    open_batches: p._count?.batches || 0,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
   }
 }
 
-export function useProducts() {
+export function useProducts(opts?: { lean?: boolean }) {
+  const lean = Boolean(opts?.lean)
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true)
+  const refresh = useCallback(async (refreshOpts?: { silent?: boolean }) => {
+    if (!refreshOpts?.silent) setLoading(true)
     setError('')
     try {
-      const data = await api<{ products: ApiProduct[] }>('/products')
+      const path = lean ? '/products?lean=1' : '/products'
+      const data = await api<{ products: ApiProduct[] }>(path)
       setProducts(data.products.map(mapProduct))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load products')
     } finally {
-      if (!opts?.silent) setLoading(false)
+      if (!refreshOpts?.silent) setLoading(false)
     }
-  }, [])
+  }, [lean])
 
   useEffect(() => {
     void refresh()
@@ -69,6 +84,9 @@ export function useProducts() {
         stockQuantity: input.stock_quantity,
         lowStockThreshold: input.low_stock_threshold,
         imageUrl: input.image_url || undefined,
+        preferredSupplierId: input.preferred_supplier_id || null,
+        trackExpiry: input.track_expiry ?? false,
+        requiresPrescription: input.requires_prescription ?? false,
       }),
     })
     await refresh()
@@ -88,6 +106,9 @@ export function useProducts() {
         stockQuantity: input.stock_quantity,
         lowStockThreshold: input.low_stock_threshold,
         imageUrl: input.image_url || null,
+        preferredSupplierId: input.preferred_supplier_id || null,
+        trackExpiry: input.track_expiry ?? false,
+        requiresPrescription: input.requires_prescription ?? false,
       }),
     })
     await refresh()

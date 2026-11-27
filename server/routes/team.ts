@@ -15,6 +15,15 @@ import {
   type AuthedRequest,
 } from '../middleware.js'
 import { prisma } from '../prisma.js'
+import { rateLimit } from '../rateLimit.js'
+import { businessHasManagerPin } from '../managerPin.js'
+
+const pinSetLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  key: (req) =>
+    `pin-set:${(req as AuthedRequest).businessId || 'x'}:${(req as AuthedRequest).auth?.sub || req.ip}`,
+})
 
 export const teamRouter = Router()
 teamRouter.use(requireAuth, requireBusinessMember)
@@ -59,23 +68,33 @@ teamRouter.get('/roles', (_req, res) => {
 teamRouter.get('/', async (req: AuthedRequest, res) => {
   if (!requireManager(req, res)) return
 
-  const members = await prisma.membership.findMany({
-    where: { businessId: req.businessId! },
-    include: {
-      user: {
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          phone: true,
-          active: true,
-          createdAt: true,
+  const businessId = req.businessId!
+  const [members, business] = await Promise.all([
+    prisma.membership.findMany({
+      where: { businessId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            phone: true,
+            active: true,
+            createdAt: true,
+          },
         },
+        branch: { select: { id: true, name: true } },
       },
-      branch: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-  })
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.business.findUnique({ where: { id: businessId } }),
+  ])
+
+  const { snapshotSubscription } = await import('../subscription.js')
+  const sub = business ? snapshotSubscription(business) : null
+  const activeSeats = members.filter((m) => m.active).length
+  const maxUsers = sub?.entitlements.maxUsers ?? 0
+  const canAdd = maxUsers > 0 ? activeSeats < maxUsers : true
 
   res.json({
     members: members.map((m) => ({
@@ -88,6 +107,17 @@ teamRouter.get('/', async (req: AuthedRequest, res) => {
       user: m.user,
       createdAt: m.createdAt,
     })),
+    seats: {
+      used: activeSeats,
+      max: maxUsers,
+      canAdd,
+      planLabel: sub?.planLabel ?? null,
+      message: canAdd
+        ? `${activeSeats} of ${maxUsers} seats used${
+            sub?.planLabel ? ` · ${sub.planLabel}` : ''
+          }`
+        : `${sub?.planLabel || 'Your'} plan allows ${maxUsers} users. Deactivate someone or ask NEXORA to raise the limit.`,
+    },
   })
 })
 
@@ -130,6 +160,10 @@ teamRouter.post('/', async (req: AuthedRequest, res) => {
       return res.status(409).json({ error: 'This person is already on your team' })
     }
   }
+
+  const { assertWithinEntitlement } = await import('../subscription.js')
+  const cap = await assertWithinEntitlement(businessId, 'users')
+  if (!cap.ok) return res.status(403).json({ error: cap.error })
 
   const permissions =
     body.data.permissions && body.data.permissions.length
@@ -320,6 +354,79 @@ teamRouter.patch('/:membershipId', async (req: AuthedRequest, res) => {
     },
   })
 })
+
+/** Whether this shop has any manager PIN configured (cashiers need to know to prompt). */
+teamRouter.get('/manager-pin/status', async (req: AuthedRequest, res) => {
+  const configured = await businessHasManagerPin(req.businessId!)
+  const mine = await prisma.membership.findFirst({
+    where: {
+      id: req.membershipId || req.auth?.membershipId || '',
+      businessId: req.businessId!,
+    },
+    select: { managerPinHash: true, role: true },
+  })
+  res.json({
+    configured,
+    selfConfigured: Boolean(mine?.managerPinHash),
+    canSet:
+      Boolean(mine) &&
+      MANAGER_ROLES.includes((mine?.role || '') as MembershipRole),
+  })
+})
+
+/** Owner/admin sets their own approval PIN (4–6 digits). */
+teamRouter.post(
+  '/manager-pin',
+  pinSetLimit,
+  async (req: AuthedRequest, res) => {
+    if (!requireManager(req, res)) return
+    const body = z
+      .object({
+        pin: z.string().regex(/^\d{4,6}$/).optional(),
+        clear: z.boolean().optional(),
+      })
+      .safeParse(req.body)
+    if (!body.success) {
+      return res.status(400).json({ error: 'PIN must be 4–6 digits' })
+    }
+
+    const membershipId = req.membershipId || req.auth?.membershipId
+    if (!membershipId) {
+      return res.status(400).json({ error: 'Membership required' })
+    }
+
+    if (body.data.clear) {
+      await prisma.membership.update({
+        where: { id: membershipId },
+        data: { managerPinHash: null },
+      })
+      await writeAudit('team.manager_pin_cleared', {
+        businessId: req.businessId!,
+        userId: req.auth!.sub,
+        entity: 'Membership',
+        entityId: membershipId,
+      })
+      return res.json({ ok: true, configured: false })
+    }
+
+    if (!body.data.pin) {
+      return res.status(400).json({ error: 'PIN must be 4–6 digits' })
+    }
+
+    const hash = await hashPassword(body.data.pin)
+    await prisma.membership.update({
+      where: { id: membershipId },
+      data: { managerPinHash: hash },
+    })
+    await writeAudit('team.manager_pin_set', {
+      businessId: req.businessId!,
+      userId: req.auth!.sub,
+      entity: 'Membership',
+      entityId: membershipId,
+    })
+    res.json({ ok: true, configured: true })
+  },
+)
 
 teamRouter.delete('/:membershipId', async (req: AuthedRequest, res) => {
   if (!requireManager(req, res)) return

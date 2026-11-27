@@ -2,26 +2,51 @@
 
 const DB_NAME = 'nexora-offline-v1'
 const STORE = 'sale_queue'
+const DB_VERSION = 2
 
-export type QueuedSaleLine = { productId: string; quantity: number; productName: string; unitPrice: number }
+export type QueuedSaleLine = {
+  productId: string
+  quantity: number
+  productName: string
+  unitPrice: number
+}
+
+export type QueuedSaleStatus =
+  | 'pending'
+  | 'syncing'
+  | 'synced'
+  | 'failed'
+  | 'conflict'
 
 export type QueuedSale = {
   clientSaleId: string
+  /** When the sale happened on device (not sync time). */
   createdAt: string
   discount: number
+  discountReason?: string
   paymentMethod: string
   notes?: string
   customerId?: string
+  loyaltyPtsRedeemed?: number
+  prescriptionNote?: string
   lines: QueuedSaleLine[]
-  status: 'pending' | 'syncing' | 'synced' | 'failed'
+  status: QueuedSaleStatus
   lastError?: string
   serverSaleId?: string
   attempts: number
+  /** Branch where sale was taken (null = unset / HO). */
+  branchId?: string | null
+  /** Device fingerprint for multi-device debugging. */
+  deviceId?: string
+  /** When last sync attempt finished. */
+  syncedAt?: string
+  /** Manager chose to retry accepting stock shortfall. */
+  allowStockConflict?: boolean
 }
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
     req.onupgradeneeded = () => {
       const db = req.result
       if (!db.objectStoreNames.contains(STORE)) {
@@ -41,14 +66,32 @@ function txDone(tx: IDBTransaction) {
   })
 }
 
+export function getOrCreateDeviceId(): string {
+  const key = 'nexora-device-id'
+  try {
+    const existing = localStorage.getItem(key)
+    if (existing) return existing
+    const id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `dev-${Date.now()}`
+    localStorage.setItem(key, id)
+    return id
+  } catch {
+    return `dev-${Date.now()}`
+  }
+}
+
 export async function enqueueSale(
-  sale: Omit<QueuedSale, 'status' | 'attempts' | 'createdAt'> & {
+  sale: Omit<QueuedSale, 'status' | 'attempts' | 'createdAt' | 'deviceId'> & {
     createdAt?: string
+    deviceId?: string
   },
 ): Promise<QueuedSale> {
   const row: QueuedSale = {
     ...sale,
     createdAt: sale.createdAt || new Date().toISOString(),
+    deviceId: sale.deviceId || getOrCreateDeviceId(),
     status: 'pending',
     attempts: 0,
   }
@@ -104,6 +147,43 @@ export async function removeQueuedSale(clientSaleId: string) {
   db.close()
 }
 
+export async function clearSyncedOrDrop(clientSaleId: string) {
+  await removeQueuedSale(clientSaleId)
+}
+
+/** Export queue JSON for support / recovery (never includes secrets). */
+export async function exportQueueJson(): Promise<string> {
+  const rows = await listQueuedSales()
+  const safe = rows.map((r) => ({
+    clientSaleId: r.clientSaleId,
+    createdAt: r.createdAt,
+    syncedAt: r.syncedAt,
+    status: r.status,
+    attempts: r.attempts,
+    lastError: r.lastError,
+    branchId: r.branchId,
+    deviceId: r.deviceId,
+    discount: r.discount,
+    paymentMethod: r.paymentMethod,
+    lineCount: r.lines.length,
+    lines: r.lines.map((l) => ({
+      productId: l.productId,
+      productName: l.productName,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice,
+    })),
+  }))
+  return JSON.stringify(
+    { exportedAt: new Date().toISOString(), count: safe.length, sales: safe },
+    null,
+    2,
+  )
+}
+
 export function isProbablyOffline() {
   return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
+export function isStockConflictError(message: string) {
+  return /stock conflict/i.test(message)
 }

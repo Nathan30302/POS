@@ -5,15 +5,9 @@ import {
 } from '@zxing/library'
 
 type BarcodeDetectorLike = {
-  detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue: string }>>
-}
-
-declare global {
-  interface Window {
-    BarcodeDetector?: new (options?: {
-      formats?: string[]
-    }) => BarcodeDetectorLike
-  }
+  detect: (
+    source: ImageBitmapSource,
+  ) => Promise<Array<{ rawValue: string; boundingBox?: DOMRectReadOnly }>>
 }
 
 const NATIVE_FORMATS = [
@@ -46,9 +40,12 @@ function zxingHints() {
 }
 
 async function detectNative(source: ImageBitmapSource): Promise<string | null> {
-  if (!window.BarcodeDetector) return null
+  const Ctor = window.BarcodeDetector as
+    | (new (options?: { formats?: string[] }) => BarcodeDetectorLike)
+    | undefined
+  if (!Ctor) return null
   try {
-    const detector = new window.BarcodeDetector({ formats: NATIVE_FORMATS })
+    const detector = new Ctor({ formats: NATIVE_FORMATS })
     const codes = await detector.detect(source)
     return codes[0]?.rawValue?.trim() || null
   } catch {

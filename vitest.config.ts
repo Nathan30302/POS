@@ -1,0 +1,20 @@
+import { defineConfig } from 'vitest/config'
+import path from 'node:path'
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    include: ['server/**/*.test.ts', 'src/**/*.test.ts'],
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
+    fileParallelism: false,
+    env: {
+      NODE_ENV: 'test',
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
+})

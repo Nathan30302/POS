@@ -17,6 +17,8 @@ enum BusinessStatus {
   SUSPENDED
   TRIAL
   CANCELLED
+  /// Self-serve signup waiting for NEXORA platform admin approval
+  PENDING_APPROVAL
 }
 
 enum MembershipRole {
@@ -37,6 +39,7 @@ enum PaymentMethod {
   AIRTEL_MONEY
   ZAMTEL
   BANK_TRANSFER
+  CREDIT
   OTHER
 }
 
@@ -98,6 +101,14 @@ model Business {
   receiptJson     String         @default("{}")
   plan            String         @default("starter")
   trialEndsAt     DateTime?
+  /// Paid period end (null while on open trial)
+  subscriptionEndsAt DateTime?
+  /// Extra days after failed renewal before hard suspend
+  graceEndsAt     DateTime?
+  /// manual | mtn_momo | airtel_money | stripe_stub
+  billingProvider String         @default("manual")
+  lastPaymentAt   DateTime?
+  lastPaymentRef  String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
@@ -117,6 +128,39 @@ model Business {
   paymentAttempts PaymentAttempt[]
   stockConflicts  StockConflict[]
   dailyBriefings  DailyBriefing[]
+  barcodeBatches  BarcodeBatch[]
+  barcodeCodes    BarcodeCode[]
+  cashShifts      CashShift[]
+  branchStocks    BranchStock[]
+  stockTransfers  StockTransfer[]
+  customerPayments CustomerPayment[]
+  subscriptionEvents SubscriptionEvent[]
+  productBatches     ProductBatch[]
+
+  @@index([status])
+  @@index([plan])
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+/// Append-only billing / subscription history per business (SaaS).
+model SubscriptionEvent {
+  id         String   @id @default(cuid())
+  businessId String
+  kind       String
+  /// starter | growth | business | enterprise
+  plan       String?
+  amount     Float    @default(0)
+  currency   String   @default("ZMW")
+  provider   String   @default("manual")
+  externalRef String?
+  note       String?
+  actorUserId String?
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, createdAt])
 }
 
 model Branch {
@@ -133,6 +177,13 @@ model Branch {
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   sales    Sale[]
   memberships Membership[]
+  cashShifts CashShift[]
+  branchStocks BranchStock[]
+  transfersFrom StockTransfer[] @relation("TransferFrom")
+  transfersTo   StockTransfer[] @relation("TransferTo")
+  purchaseOrders PurchaseOrder[]
+  stockMoves StockMovement[]
+  expenses Expense[]
 
   @@index([businessId])
 }
@@ -150,18 +201,25 @@ model User {
   memberships Membership[]
   sales       Sale[]        @relation("SoldBy")
   auditLogs   AuditLog[]
+  shiftsOpened CashShift[]  @relation("ShiftOpenedBy")
+  shiftsClosed CashShift[]  @relation("ShiftClosedBy")
+  expensesRecorded Expense[] @relation("ExpenseRecordedBy")
+  expensesApproved Expense[] @relation("ExpenseApprovedBy")
+  customerPayments CustomerPayment[] @relation("CustomerPaymentBy")
 }
 
 model Membership {
-  id          String         @id @default(cuid())
-  businessId  String
-  userId      String
-  branchId    String?
-  role        MembershipRole @default(CASHIER)
-  permissions String         @default("[]")
-  active      Boolean        @default(true)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id             String         @id @default(cuid())
+  businessId     String
+  userId         String
+  branchId       String?
+  role           MembershipRole @default(CASHIER)
+  permissions    String         @default("[]")
+  /// bcrypt hash of 4–6 digit manager approval PIN (optional)
+  managerPinHash String?
+  active         Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -169,6 +227,7 @@ model Membership {
 
   @@unique([businessId, userId])
   @@index([businessId])
+  @@index([userId])
 }
 
 model Category {
@@ -186,35 +245,141 @@ model Category {
 }
 
 model Product {
-  id                String   @id @default(cuid())
-  businessId        String
-  categoryId        String?
-  name              String
-  sku               String?
-  barcode           String?
-  description       String?
-  costPrice         Float    @default(0)
-  sellingPrice      Float
-  stockQuantity     Int      @default(0)
-  lowStockThreshold Int      @default(10)
-  trackExpiry       Boolean  @default(false)
-  expiryDate        DateTime?
-  imageUrl          String?
-  active            Boolean  @default(true)
-  variantsJson      String   @default("[]")
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  businessId          String
+  categoryId          String?
+  preferredSupplierId String?
+  name                String
+  sku                 String?
+  barcode             String?
+  description         String?
+  costPrice           Float    @default(0)
+  sellingPrice        Float
+  stockQuantity       Int      @default(0)
+  lowStockThreshold   Int      @default(10)
+  trackExpiry         Boolean  @default(false)
+  expiryDate          DateTime?
+  /// Pharmacy: Rx / pharmacist counsel required before dispense
+  requiresPrescription Boolean @default(false)
+  imageUrl            String?
+  active              Boolean  @default(true)
+  variantsJson        String   @default("[]")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  category   Category?       @relation(fields: [categoryId], references: [id])
-  saleItems  SaleItem[]
-  stockMoves StockMovement[]
-  poItems    PurchaseOrderItem[]
+  business          Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category          Category?       @relation(fields: [categoryId], references: [id])
+  preferredSupplier Supplier?       @relation(fields: [preferredSupplierId], references: [id])
+  saleItems         SaleItem[]
+  stockMoves        StockMovement[]
+  poItems           PurchaseOrderItem[]
+  branchStocks      BranchStock[]
+  transferItems     StockTransferItem[]
+  batches           ProductBatch[]
 
   @@unique([businessId, barcode])
   @@unique([businessId, sku])
   @@index([businessId])
   @@index([businessId, name])
+  @@index([preferredSupplierId])
+}
+
+/// Pharmacy / perishable lot — FEFO sell deducts soonest expiry first.
+model ProductBatch {
+  id         String   @id @default(cuid())
+  businessId String
+  productId  String
+  lotNumber  String
+  expiryDate DateTime
+  quantity   Int      @default(0)
+  costPrice  Float?
+  note       String?
+  receivedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, expiryDate])
+  @@index([productId, expiryDate])
+  @@index([businessId, productId])
+}
+
+/// Per-branch on-hand quantity. Product.stockQuantity stays the business-wide sum.
+model BranchStock {
+  id         String   @id @default(cuid())
+  businessId String
+  branchId   String
+  productId  String
+  quantity   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, productId])
+  @@index([businessId])
+  @@index([productId])
+}
+
+enum StockTransferStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  DISPATCHED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model StockTransfer {
+  id              String              @id @default(cuid())
+  businessId      String
+  fromBranchId    String
+  toBranchId      String
+  status          StockTransferStatus @default(REQUESTED)
+  notes           String?
+  rejectReason    String?
+  discrepancyNote String?
+  requestedById   String
+  approvedById    String?
+  dispatchedById  String?
+  receivedById    String?
+  requestedAt     DateTime            @default(now())
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  dispatchedAt    DateTime?
+  receivedAt      DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fromBranch Branch              @relation("TransferFrom", fields: [fromBranchId], references: [id])
+  toBranch   Branch              @relation("TransferTo", fields: [toBranchId], references: [id])
+  items      StockTransferItem[]
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+}
+
+model StockTransferItem {
+  id            String @id @default(cuid())
+  transferId    String
+  productId     String
+  requestedQty  Int
+  approvedQty   Int?
+  dispatchedQty Int    @default(0)
+  receivedQty   Int    @default(0)
+  /// Set on final receive: dispatchedQty - receivedQty when short
+  discrepancy   Int    @default(0)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+
+  @@index([transferId])
 }
 
 model Customer {
@@ -227,13 +392,36 @@ model Customer {
   balance     Float    @default(0)
   loyaltyPts  Int      @default(0)
   notes       String?
+  /// Soft-delete — keep sales history; hide from lists when false
+  active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   sales    Sale[]
+  payments CustomerPayment[]
 
   @@index([businessId])
+  @@index([businessId, active])
+}
+
+/// Payment against customer credit balance (not a sale).
+model CustomerPayment {
+  id           String   @id @default(cuid())
+  businessId   String
+  customerId   String
+  amount       Float
+  method       String   @default("CASH")
+  note         String?
+  recordedById String?
+  createdAt    DateTime @default(now())
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  recordedBy User?    @relation("CustomerPaymentBy", fields: [recordedById], references: [id])
+
+  @@index([businessId, createdAt])
+  @@index([customerId, createdAt])
 }
 
 model Supplier {
@@ -250,6 +438,7 @@ model Supplier {
 
   business       Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
   purchaseOrders PurchaseOrder[]
+  products       Product[]
 
   @@index([businessId])
 }
@@ -295,6 +484,8 @@ model SaleItem {
   unitPrice   Float
   lineTotal   Float
   costPrice   Float  @default(0)
+  /// FEFO allocations: [{ batchId, lotNumber, qty, expiryDate }]
+  batchAllocJson String @default("[]")
 
   sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
@@ -306,6 +497,7 @@ model StockMovement {
   id          String            @id @default(cuid())
   businessId  String
   productId   String
+  branchId    String?
   type        StockMovementType
   quantity    Int
   note        String?
@@ -314,39 +506,59 @@ model StockMovement {
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   product  Product  @relation(fields: [productId], references: [id])
+  branch   Branch?  @relation(fields: [branchId], references: [id])
 
   @@index([businessId, createdAt])
+  @@index([branchId, createdAt])
 }
 
 model Expense {
-  id          String   @id @default(cuid())
-  businessId  String
-  category    String
-  amount      Float
-  note        String?
-  spentAt     DateTime @default(now())
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  businessId   String
+  branchId     String?
+  category     String
+  amount       Float
+  paymentMethod String  @default("CASH")
+  note         String?
+  spentAt      DateTime @default(now())
+  recordedById String?
+  /// RECORDED | PENDING_APPROVAL | APPROVED | REJECTED
+  status       String   @default("RECORDED")
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime @default(now())
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch?  @relation(fields: [branchId], references: [id])
+  recordedBy User?    @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  approvedBy User?    @relation("ExpenseApprovedBy", fields: [approvedById], references: [id])
 
   @@index([businessId, spentAt])
+  @@index([businessId, status])
 }
 
 model PurchaseOrder {
-  id         String   @id @default(cuid())
-  businessId String
-  supplierId String
-  status     String   @default("DRAFT")
-  total      Float    @default(0)
-  notes      String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id              String    @id @default(cuid())
+  businessId      String
+  supplierId      String
+  /// Branch that will receive stock on receive
+  receiveBranchId String?
+  status          String    @default("DRAFT")
+  total           Float     @default(0)
+  notes           String?
+  createdById     String?
+  orderedAt       DateTime?
+  receivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  business Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  supplier Supplier            @relation(fields: [supplierId], references: [id])
-  items    PurchaseOrderItem[]
+  business      Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier      Supplier            @relation(fields: [supplierId], references: [id])
+  receiveBranch Branch?             @relation(fields: [receiveBranchId], references: [id])
+  items         PurchaseOrderItem[]
 
   @@index([businessId])
+  @@index([businessId, status])
 }
 
 model PurchaseOrderItem {
@@ -356,6 +568,7 @@ model PurchaseOrderItem {
   quantity        Int
   unitCost        Float
   lineTotal       Float
+  receivedQty     Int    @default(0)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   product       Product       @relation(fields: [productId], references: [id])
@@ -476,10 +689,100 @@ model AuditLog {
   entity     String?
   entityId   String?
   metaJson   String   @default("{}")
+  /// SHA-256 of previous entryHash (null for genesis / legacy rows)
+  prevHash   String?
+  /// SHA-256 chain digest for this row (null on legacy rows written before chaining)
+  entryHash  String?
   createdAt  DateTime @default(now())
 
   business Business? @relation(fields: [businessId], references: [id], onDelete: Cascade)
   user     User?     @relation(fields: [userId], references: [id])
 
   @@index([businessId, createdAt])
+}
+
+enum CashShiftStatus {
+  OPEN
+  CLOSED
+}
+
+/// Cashier till session — opening float vs cash sales vs declared close.
+model CashShift {
+  id                String          @id @default(cuid())
+  businessId        String
+  branchId          String?
+  openedById        String
+  closedById        String?
+  status            CashShiftStatus @default(OPEN)
+  openingFloat      Float
+  /// Sum of COMPLETED CASH sales during the open window (computed at close)
+  cashSalesTotal    Float           @default(0)
+  expectedCash      Float?
+  declaredCash      Float?
+  discrepancy       Float?
+  discrepancyReason String?
+  notes             String?
+  openedAt          DateTime        @default(now())
+  closedAt          DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branchId], references: [id])
+  openedBy User     @relation("ShiftOpenedBy", fields: [openedById], references: [id])
+  closedBy User?    @relation("ShiftClosedBy", fields: [closedById], references: [id])
+
+  @@index([businessId, status])
+  @@index([businessId, openedAt])
+  @@index([openedById, status])
+}
+
+/// Pre-printed blank sticker batch (unique EAN-13 codes, no product yet).
+enum BarcodeBatchStatus {
+  READY
+  PRINTED
+  EXHAUSTED
+}
+
+enum BarcodeCodeStatus {
+  AVAILABLE
+  CLAIMED
+}
+
+model BarcodeBatch {
+  id           String             @id @default(cuid())
+  businessId   String
+  label        String?
+  quantity     Int
+  status       BarcodeBatchStatus @default(READY)
+  printedAt    DateTime?
+  exhaustedAt  DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  codes    BarcodeCode[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status])
+}
+
+model BarcodeCode {
+  id         String            @id @default(cuid())
+  businessId String
+  batchId    String
+  /// EAN-13 digits (unique per business; never reused across batches)
+  code       String
+  status     BarcodeCodeStatus @default(AVAILABLE)
+  productId  String?
+  claimedAt  DateTime?
+  createdAt  DateTime          @default(now())
+
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  batch    BarcodeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, code])
+  @@index([businessId, status])
+  @@index([batchId])
+  @@index([productId])
 }

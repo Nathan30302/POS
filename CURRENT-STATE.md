@@ -1,10 +1,10 @@
 # NEXORA Shop OS — current state (v0.1.0)
 
-Last updated: 19 Nov 2026
+Last updated: 23 Nov 2026
 
 Progress tracker: **[DEVELOPMENT-CHECKLIST.md](./DEVELOPMENT-CHECKLIST.md)**.
 
-**Latest engineering pass:** Phase 1–4 core complete for local demo — RBAC, offline sales sync, stock conflict UI, payments abstraction, Pulse briefing + scenario simulator, catalogue virtualization, multi-branch switch (sale tagging). Restart with `./scripts/force-restart.sh`.
+**Latest engineering pass (gap closure after Waves 1–5):** Multi-shop `GET /auth/memberships` + `POST /auth/switch-business` (Settings → Your shops), production `/uploads` behind `requireAuth`, Settings theme card + shop switcher extracted, `docs/ARCHITECTURE.md` + `docs/QUALITY-ASSESSMENT.md`, README testing section, Playwright in CI. Waves 1–5 remain shipped.
 
 NEXORA is a multi-tenant **shop operating system** (Sell, inventory, ledger, customers, Pulse, team, settings) — not a single-register toy POS. Stack: React 19 + Vite 8 + Tailwind 4 + Express 5 + Prisma 6 + SQLite.
 

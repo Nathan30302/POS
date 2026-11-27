@@ -1,4 +1,19 @@
 import type { CSSProperties } from 'react'
+import { useState } from 'react'
+import type { LiveAmbientVariant } from '@/lib/theme'
+import { LiveVideoAtmosphere } from '@/components/LiveVideoAtmosphere'
+import { isWeakDevice, prefersReducedMotion } from '@/lib/devicePerf'
+
+function useLiteAmbient() {
+  const [lite] = useState(
+    () =>
+      prefersReducedMotion() ||
+      isWeakDevice() ||
+      (typeof window !== 'undefined' &&
+        window.matchMedia('(max-width: 1023px)').matches),
+  )
+  return lite
+}
 
 /** Cinematic live sky: clouds, birds, plane, kite, city silhouette. Pure CSS/SVG. */
 export function LiveSkyScene({ variant = 'night' }: { variant?: 'night' | 'dusk' }) {
@@ -77,17 +92,92 @@ export function LiveSkyScene({ variant = 'night' }: { variant?: 'night' | 'dusk'
   )
 }
 
-export function LiveAmbient() {
+function FloorAmbient({ lite }: { lite?: boolean }) {
+  const dust = lite ? 8 : 28
   return (
-    <div className="live-ambient pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+    <>
       <div className="ambient-orb ambient-orb-a" />
-      <div className="ambient-orb ambient-orb-b" />
-      <div className="ambient-orb ambient-orb-c" />
+      {!lite ? <div className="ambient-orb ambient-orb-b" /> : null}
+      {!lite ? <div className="ambient-orb ambient-orb-c" /> : null}
       <div className="ambient-dust">
-        {Array.from({ length: 28 }).map((_, i) => (
+        {Array.from({ length: dust }).map((_, i) => (
           <span key={i} style={{ '--i': i } as CSSProperties} />
         ))}
       </div>
+    </>
+  )
+}
+
+/** Real night-sky field — nebula, drifting stars, shooting stars. */
+function SkyAmbient({ lite }: { lite?: boolean }) {
+  return (
+    <>
+      <div className="sky-deep absolute inset-0" />
+      <div className="sky-nebula sky-nebula-a" />
+      {!lite ? <div className="sky-nebula sky-nebula-b" /> : null}
+      {!lite ? <div className="sky-nebula sky-nebula-c" /> : null}
+      <div className="sky-starfield" />
+      {!lite ? <div className="sky-starfield sky-starfield-slow" /> : null}
+      {!lite ? <div className="sky-starfield sky-starfield-drift" /> : null}
+      {!lite ? (
+        <div className="sky-meteors" aria-hidden>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <span
+              key={i}
+              className="sky-meteor"
+              style={{ '--i': i } as CSSProperties}
+            />
+          ))}
+        </div>
+      ) : null}
+      <div className="ambient-dust ambient-dust-sky">
+        {Array.from({ length: lite ? 6 : 18 }).map((_, i) => (
+          <span key={i} style={{ '--i': i } as CSSProperties} />
+        ))}
+      </div>
+      <div className="sky-horizon absolute inset-x-0 bottom-0 h-36" />
+    </>
+  )
+}
+
+/** Warm commerce bokeh for Live Market. */
+function MarketAmbient({ lite }: { lite?: boolean }) {
+  return (
+    <>
+      <div className="market-glow market-glow-a" />
+      {!lite ? <div className="market-glow market-glow-b" /> : null}
+      {!lite ? <div className="market-glow market-glow-c" /> : null}
+      <div className="market-bokeh">
+        {Array.from({ length: lite ? 6 : 16 }).map((_, i) => (
+          <span key={i} style={{ '--i': i } as CSSProperties} />
+        ))}
+      </div>
+    </>
+  )
+}
+
+export function LiveAmbient({
+  variant = 'floor',
+}: {
+  variant?: LiveAmbientVariant
+}) {
+  const lite = useLiteAmbient()
+  return (
+    <div
+      className={`live-ambient live-ambient-${variant} pointer-events-none absolute inset-0 overflow-hidden`}
+      aria-hidden
+    >
+      {variant === 'city' ? (
+        <LiveVideoAtmosphere clip="city" />
+      ) : variant === 'streets' ? (
+        <LiveVideoAtmosphere clip="streets" />
+      ) : variant === 'sky' ? (
+        <SkyAmbient lite={lite} />
+      ) : variant === 'market' ? (
+        <MarketAmbient lite={lite} />
+      ) : (
+        <FloorAmbient lite={lite} />
+      )}
     </div>
   )
 }

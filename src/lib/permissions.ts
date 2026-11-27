@@ -9,6 +9,11 @@ export const ALL_PERMISSIONS = [
   'void_sales',
   'receive_stock',
   'discounts',
+  'transfer_request',
+  'transfer_approve',
+  'transfer_receive',
+  'credit_sales',
+  'expenses',
 ] as const
 
 export type Permission = (typeof ALL_PERMISSIONS)[number]
@@ -24,6 +29,11 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   void_sales: 'Void completed sales',
   receive_stock: 'Receive stock',
   discounts: 'Apply discounts',
+  transfer_request: 'Request branch transfers',
+  transfer_approve: 'Approve branch transfers',
+  transfer_receive: 'Receive branch transfers',
+  credit_sales: 'Sell on customer credit',
+  expenses: 'Record and manage expenses',
 }
 
 export const ROLE_LABELS: Record<string, string> = {
@@ -41,6 +51,10 @@ export const NAV_PERMISSION: Record<string, Permission | null> = {
   '/app/dashboard': null,
   '/app/checkout': 'sell',
   '/app/products': 'inventory',
+  '/app/transfers': 'transfer_request',
+  '/app/purchasing': 'inventory',
+  '/app/suppliers': 'inventory',
+  '/app/expenses': 'expenses',
   '/app/sales': 'ledger',
   '/app/customers': 'customers',
   '/app/insights': 'pulse',

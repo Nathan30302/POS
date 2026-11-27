@@ -7,11 +7,15 @@ import {
   writeAudit,
   type AuthedRequest,
 } from '../middleware.js'
-import { getPaymentProvider, listPaymentProviders, mapSalePaymentMethod } from '../payments/providers.js'
+import {
+  getPaymentProvider,
+  listPaymentProviders,
+  mapSalePaymentMethod,
+} from '../payments/providers.js'
+import { getRequestToPayStatus, momoKeysPresent } from '../payments/momoCollection.js'
 import { prisma } from '../prisma.js'
 
 export const paymentsRouter = Router()
-paymentsRouter.use(requireAuth, requireBusinessMember)
 
 const statusMap = {
   initiated: 'INITIATED',
@@ -22,15 +26,35 @@ const statusMap = {
   reversed: 'REVERSED',
 } as const
 
-paymentsRouter.get('/providers', requirePermission('sell'), (_req, res) => {
-  res.json({
-    providers: listPaymentProviders(),
-    note: 'MoMo sandbox needs MOMO_* env keys. Without them, agent/manual fallback is used and payments stay pending until confirmed.',
-  })
-})
+const lifecycleFromDb = {
+  INITIATED: 'initiated',
+  PENDING: 'pending',
+  CONFIRMED: 'confirmed',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+  REVERSED: 'reversed',
+} as const
+
+paymentsRouter.get(
+  '/providers',
+  requireAuth,
+  requireBusinessMember,
+  requirePermission('sell'),
+  (_req, res) => {
+    res.json({
+      providers: listPaymentProviders(),
+      momoLive: momoKeysPresent(),
+      note: momoKeysPresent()
+        ? 'MTN Collection keys detected — request-to-pay will be attempted when phone is provided.'
+        : 'MoMo sandbox needs MOMO_* env keys. Without them, agent/manual fallback is used and payments stay pending until confirmed.',
+    })
+  },
+)
 
 paymentsRouter.post(
   '/initiate',
+  requireAuth,
+  requireBusinessMember,
   requirePermission('sell'),
   async (req: AuthedRequest, res) => {
     const body = z
@@ -106,7 +130,10 @@ paymentsRouter.post(
 
 paymentsRouter.post(
   '/:id/confirm',
-  requirePermission('sell'),
+  requireAuth,
+  requireBusinessMember,
+  // Manual confirm is a trust-sensitive action — not cashiers (sell-only)
+  requirePermission('ledger'),
   async (req: AuthedRequest, res) => {
     const payment = await prisma.paymentAttempt.findFirst({
       where: { id: req.params.id, businessId: req.businessId! },
@@ -134,11 +161,161 @@ paymentsRouter.post(
   },
 )
 
-/** Webhook-ready stub — verify signatures when a provider is connected. */
+/** Poll provider status and sync PaymentAttempt. */
+paymentsRouter.post(
+  '/:id/poll',
+  requireAuth,
+  requireBusinessMember,
+  requirePermission('sell'),
+  async (req: AuthedRequest, res) => {
+    const payment = await prisma.paymentAttempt.findFirst({
+      where: { id: req.params.id, businessId: req.businessId! },
+    })
+    if (!payment) return res.status(404).json({ error: 'Payment not found' })
+    if (payment.status === 'CONFIRMED' || payment.status === 'FAILED') {
+      return res.json({
+        payment,
+        lifecycle: lifecycleFromDb[payment.status],
+        polled: false,
+      })
+    }
+
+    const provider = getPaymentProvider(payment.provider)
+    let lifecycle: keyof typeof statusMap = 'pending'
+    if (provider.poll && payment.externalRef) {
+      lifecycle = (await provider.poll(payment.externalRef)) as keyof typeof statusMap
+    } else if (payment.externalRef && payment.provider.includes('mtn')) {
+      const { status } = await getRequestToPayStatus(payment.externalRef)
+      if (status === 'confirmed') lifecycle = 'confirmed'
+      else if (status === 'failed') lifecycle = 'failed'
+      else if (status === 'cancelled') lifecycle = 'cancelled'
+    }
+
+    if (lifecycle === 'pending' || lifecycle === 'initiated') {
+      return res.json({ payment, lifecycle: 'pending', polled: true })
+    }
+
+    const updated = await prisma.paymentAttempt.update({
+      where: { id: payment.id },
+      data: { status: statusMap[lifecycle] },
+    })
+
+    await writeAudit('payment.poll', {
+      businessId: req.businessId!,
+      userId: req.auth!.sub,
+      entity: 'PaymentAttempt',
+      entityId: payment.id,
+      before: { status: payment.status },
+      after: { status: updated.status },
+    })
+
+    res.json({ payment: updated, lifecycle, polled: true })
+  },
+)
+
+/**
+ * MoMo / provider webhooks — no JWT (provider callback).
+ * Shared secret required in production (boot-enforced); always verified when set.
+ */
 paymentsRouter.post('/webhooks/:provider', async (req, res) => {
-  // Intentionally open structure; real providers must validate signatures.
-  console.info('[payments.webhook]', req.params.provider, {
-    keys: Object.keys(req.body || {}),
+  const provider = String(req.params.provider || '')
+  const secret = process.env.MOMO_WEBHOOK_SECRET?.trim()
+  const isProd = process.env.NODE_ENV === 'production'
+  if (isProd && !secret) {
+    return res.status(503).json({ error: 'Webhook secret not configured' })
+  }
+  if (secret) {
+    const hdr =
+      req.header('x-callback-secret') ||
+      req.header('authorization')?.replace(/^Bearer\s+/i, '') ||
+      ''
+    if (hdr !== secret) {
+      return res.status(401).json({ error: 'Invalid webhook secret' })
+    }
+  } else {
+    console.warn(
+      '[payments.webhook] MOMO_WEBHOOK_SECRET unset — accepting unauthenticated webhook (dev only)',
+    )
+  }
+
+  const body = (req.body || {}) as Record<string, unknown>
+  const ref =
+    (typeof body.referenceId === 'string' && body.referenceId) ||
+    (typeof body.externalId === 'string' && body.externalId) ||
+    (typeof req.header('x-reference-id') === 'string'
+      ? req.header('x-reference-id')
+      : null)
+
+  const rawStatus = String(
+    body.status || body.financialTransactionId || '',
+  ).toUpperCase()
+
+  console.info('[payments.webhook]', provider, {
+    ref,
+    status: rawStatus || Object.keys(body),
   })
-  res.json({ ok: true, received: true })
+
+  if (!ref) {
+    return res.json({ ok: true, received: true, matched: false })
+  }
+
+  const payment = await prisma.paymentAttempt.findFirst({
+    where: { externalRef: ref },
+  })
+  if (!payment) {
+    return res.json({ ok: true, received: true, matched: false })
+  }
+
+  let next: keyof typeof statusMap | null = null
+  if (
+    rawStatus === 'SUCCESSFUL' ||
+    rawStatus === 'SUCCESS' ||
+    rawStatus === 'CONFIRMED'
+  ) {
+    next = 'confirmed'
+  } else if (rawStatus === 'FAILED') {
+    next = 'failed'
+  } else if (
+    rawStatus === 'REJECTED' ||
+    rawStatus === 'TIMEOUT' ||
+    rawStatus === 'CANCELLED'
+  ) {
+    next = 'cancelled'
+  }
+
+  // If body has no status, re-poll Collection API
+  if (!next && payment.externalRef && provider.includes('mtn')) {
+    try {
+      const { status } = await getRequestToPayStatus(payment.externalRef)
+      if (status === 'confirmed') next = 'confirmed'
+      else if (status === 'failed') next = 'failed'
+      else if (status === 'cancelled') next = 'cancelled'
+    } catch {
+      /* keep pending */
+    }
+  }
+
+  if (!next || payment.status === statusMap[next]) {
+    return res.json({
+      ok: true,
+      received: true,
+      matched: true,
+      status: payment.status,
+    })
+  }
+
+  const updated = await prisma.paymentAttempt.update({
+    where: { id: payment.id },
+    data: { status: statusMap[next] },
+  })
+
+  await writeAudit('payment.webhook', {
+    businessId: payment.businessId,
+    entity: 'PaymentAttempt',
+    entityId: payment.id,
+    before: { status: payment.status },
+    after: { status: updated.status, provider },
+  })
+
+  res.json({ ok: true, received: true, matched: true, status: updated.status })
 })

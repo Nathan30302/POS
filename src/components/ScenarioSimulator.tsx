@@ -4,6 +4,7 @@ import { formatZMW } from '@/lib/money'
 
 type Props = {
   baselineRevenue30: number
+  /** Gross margin as a ratio (0–1), matching Pulse `margin30`. */
   baselineMargin30: number
   avgTicket30: number
 }
@@ -18,13 +19,17 @@ export function ScenarioSimulator({
   const [costPct, setCostPct] = useState(0)
   const [discountPct, setDiscountPct] = useState(0)
 
+  const marginRatio = Math.max(0, Math.min(1, baselineMargin30))
+  const baselineMarginPct = marginRatio * 100
+
   const result = useMemo(() => {
     const rev =
       baselineRevenue30 *
       (1 + pricePct / 100) *
       (1 + volumePct / 100) *
       (1 - discountPct / 100)
-    const baseCostShare = Math.max(0, 1 - baselineMargin30 / 100)
+    // margin30 is already a ratio (e.g. 0.32), not a percent
+    const baseCostShare = Math.max(0, 1 - marginRatio)
     const costShare = Math.min(
       0.95,
       Math.max(0.05, baseCostShare * (1 + costPct / 100)),
@@ -34,12 +39,12 @@ export function ScenarioSimulator({
     const ticket =
       avgTicket30 * (1 + pricePct / 100) * (1 - discountPct / 100)
     const deltaRev = rev - baselineRevenue30
-    const baseProfit = baselineRevenue30 * (baselineMargin30 / 100)
+    const baseProfit = baselineRevenue30 * marginRatio
     const deltaProfit = profit - baseProfit
     return { rev, profit, margin, ticket, deltaRev, deltaProfit }
   }, [
     baselineRevenue30,
-    baselineMargin30,
+    marginRatio,
     avgTicket30,
     pricePct,
     volumePct,
@@ -55,7 +60,7 @@ export function ScenarioSimulator({
         </div>
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
-            Scenario simulator
+            Scenario coach
           </p>
           <h3 className="font-display text-lg font-semibold text-ink">
             What if we change price, volume, or cost?
@@ -147,7 +152,7 @@ export function ScenarioSimulator({
             {result.margin.toFixed(1)}%
           </p>
           <p className="text-[11px] text-ink-soft">
-            was {baselineMargin30.toFixed(1)}%
+            was {baselineMarginPct.toFixed(1)}%
           </p>
         </div>
         <div className="rounded-xl bg-surface px-3 py-3">

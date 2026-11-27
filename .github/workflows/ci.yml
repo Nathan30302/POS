@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Prepare database
+        run: |
+          npx prisma migrate deploy
+          npm run db:seed
+        env:
+          DATABASE_URL: file:./prisma/ci.db
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-chars-long
+
+      - name: Unit + API integration tests
+        run: npm run test
+        env:
+          DATABASE_URL: file:./prisma/ci.db
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-chars-long
+          NODE_ENV: test
+
+      - name: Start API
+        run: |
+          node --import tsx server/index.ts &
+          echo $! > /tmp/nexora-api.pid
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:4000/api/health >/dev/null; then
+              echo "API ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API failed to start"
+          exit 1
+        env:
+          DATABASE_URL: file:./prisma/ci.db
+          JWT_SECRET: ci-test-jwt-secret-at-least-32-chars-long
+          PORT: '4000'
+          NODE_ENV: development
+
+      - name: Functional smoke
+        run: npm run smoke:functional
+        env:
+          API_URL: http://127.0.0.1:4000/api
+          WEB_URL: http://127.0.0.1:5173
+
+      - name: Security smoke
+        run: npm run security:smoke
+        env:
+          API_URL: http://127.0.0.1:4000/api
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Start web (Vite)
+        run: |
+          npm run dev:web &
+          echo $! > /tmp/nexora-web.pid
+          for i in $(seq 1 45); do
+            if curl -sf http://127.0.0.1:5173 >/dev/null; then
+              echo "Web ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Web failed to start"
+          exit 1
+        env:
+          VITE_API_PROXY: http://127.0.0.1:4000
+
+      - name: Playwright e2e
+        run: npm run test:e2e
+        env:
+          CI: 'true'
+          PLAYWRIGHT_SKIP_WEBSERVER: '1'
+          PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+          API_URL: http://127.0.0.1:4000/api
+
+      - name: Stop API / web
+        if: always()
+        run: |
+          if [ -f /tmp/nexora-api.pid ]; then kill $(cat /tmp/nexora-api.pid) || true; fi
+          if [ -f /tmp/nexora-web.pid ]; then kill $(cat /tmp/nexora-web.pid) || true; fi

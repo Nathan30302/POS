@@ -5,15 +5,9 @@ import { BarcodeFormat, DecodeHintType } from '@zxing/library'
 const DEMO_CODE = '6001001001002'
 
 type BarcodeDetectorLike = {
-  detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue: string }>>
-}
-
-declare global {
-  interface Window {
-    BarcodeDetector?: new (options?: {
-      formats?: string[]
-    }) => BarcodeDetectorLike
-  }
+  detect: (
+    source: ImageBitmapSource,
+  ) => Promise<Array<{ rawValue: string; boundingBox?: DOMRectReadOnly }>>
 }
 
 function buildDemoCanvas() {
@@ -49,9 +43,12 @@ export async function runScanSelfTest(): Promise<{
 }> {
   const canvas = buildDemoCanvas()
 
-  if (window.BarcodeDetector) {
+  const Ctor = window.BarcodeDetector as
+    | (new (options?: { formats?: string[] }) => BarcodeDetectorLike)
+    | undefined
+  if (Ctor) {
     try {
-      const detector = new window.BarcodeDetector({
+      const detector = new Ctor({
         formats: ['code_128', 'ean_13', 'ean_8', 'upc_a'],
       })
       const cold0 = performance.now()

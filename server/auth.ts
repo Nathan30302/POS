@@ -19,6 +19,8 @@ export type AuthRequest = Request & {
   user?: TokenPayload
   businessId?: string
   branchId?: string
+  /** Head Office / all-branches scope (X-Branch-Id: __all__). */
+  orgView?: boolean
   membershipRole?: MembershipRole | string
   /** Effective permissions from live membership (set by requirePermission / member load). */
   permissions?: string[]

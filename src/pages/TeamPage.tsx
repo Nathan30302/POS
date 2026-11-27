@@ -4,6 +4,8 @@ import { KeyRound, Plus, Shield, UserPlus, Users } from 'lucide-react'
 import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
+import { Input } from '@/components/ui/Input'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
 import {
@@ -33,6 +35,14 @@ type RoleMeta = {
   defaults: Record<string, Permission[]>
 }
 
+type SeatInfo = {
+  used: number
+  max: number
+  canAdd: boolean
+  planLabel: string | null
+  message: string
+}
+
 const emptyForm = {
   fullName: '',
   email: '',
@@ -45,21 +55,24 @@ const emptyForm = {
 export function TeamPage() {
   const { isOwnerLike } = useAuth()
   const [members, setMembers] = useState<Member[]>([])
+  const [seats, setSeats] = useState<SeatInfo | null>(null)
   const [meta, setMeta] = useState<RoleMeta | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Member | null>(null)
   const [resetPassword, setResetPassword] = useState('')
   const [error, setError] = useState('')
+  const [ok, setOk] = useState('')
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(true)
 
   async function load() {
     const [list, roles] = await Promise.all([
-      api<{ members: Member[] }>('/team'),
+      api<{ members: Member[]; seats?: SeatInfo }>('/team'),
       api<RoleMeta>('/team/roles'),
     ])
     setMembers(list.members)
+    setSeats(list.seats ?? null)
     setMeta(roles)
   }
 
@@ -85,6 +98,7 @@ export function TeamPage() {
     e.preventDefault()
     setBusy(true)
     setError('')
+    setOk('')
     try {
       await api('/team', {
         method: 'POST',
@@ -99,6 +113,8 @@ export function TeamPage() {
       })
       setForm(emptyForm)
       setOpen(false)
+      setOk('Team member created.')
+      window.setTimeout(() => setOk(''), 2200)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create account')
@@ -112,6 +128,7 @@ export function TeamPage() {
     if (!editing) return
     setBusy(true)
     setError('')
+    setOk('')
     try {
       await api(`/team/${editing.membershipId}`, {
         method: 'PATCH',
@@ -126,6 +143,8 @@ export function TeamPage() {
       })
       setEditing(null)
       setResetPassword('')
+      setOk('Member updated.')
+      window.setTimeout(() => setOk(''), 2200)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Update failed')
@@ -152,12 +171,15 @@ export function TeamPage() {
         <PageHero
           eyebrow="Access · people"
           title="Team & permissions"
-          subtitle="Staff accounts are managed by owners and admins."
         />
         <div className="nx-card flex flex-col items-center px-6 py-12 text-center">
-          <Shield className="h-8 w-8 text-ink-soft" />
-          <h2 className="mt-3 font-display text-xl font-bold">Team access locked</h2>
-          <p className="mt-2 text-sm text-ink-soft">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-card text-ink-soft">
+            <Shield className="h-6 w-6" />
+          </div>
+          <h2 className="font-display mt-3 text-xl font-bold text-ink">
+            Team access locked
+          </h2>
+          <p className="mt-2 max-w-sm text-sm text-ink-soft">
             Only the business owner or admin can create staff accounts and set
             permissions.
           </p>
@@ -170,16 +192,24 @@ export function TeamPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-5">
       <PageHero
         eyebrow="Access · people"
         title="Team & permissions"
-        subtitle="Create staff logins, assign roles, and lock each person to the exact tools they need."
         actions={
           <Button
             type="button"
-            className="bg-[#3563E9] hover:bg-[#2f58d4]"
+            disabled={Boolean(seats && !seats.canAdd && !open)}
+            title={
+              seats && !seats.canAdd
+                ? seats.message
+                : undefined
+            }
             onClick={() => {
+              if (seats && !seats.canAdd && !open) {
+                setError(seats.message)
+                return
+              }
               setOpen((v) => !v)
               if (meta) applyRoleDefaults('CASHIER')
             }}
@@ -190,56 +220,84 @@ export function TeamPage() {
         }
       />
 
-      {error ? (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">{error}</p>
+      {error ? <FormBanner tone="error">{error}</FormBanner> : null}
+      {ok ? <FormBanner tone="ok">{ok}</FormBanner> : null}
+
+      {seats ? (
+        <div
+          className={`rounded-2xl border px-4 py-3 text-sm ${
+            seats.canAdd
+              ? 'border-line bg-card text-ink-soft'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+          }`}
+        >
+          <p className="font-medium text-ink">
+            Staff seats · {seats.used}/{seats.max}
+            {seats.planLabel ? ` · ${seats.planLabel}` : ''}
+          </p>
+          <p className="mt-0.5 text-xs">{seats.message}</p>
+        </div>
       ) : null}
 
       {open ? (
-        <form onSubmit={onCreate} className="nx-card space-y-4 p-5">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <input
+        <form onSubmit={onCreate} className="nx-card space-y-4 p-4 sm:p-5">
+          <div>
+            <h3 className="nx-section-title text-base">New staff account</h3>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Login details first, then role and permissions.
+              {seats
+                ? ` ${seats.used}/${seats.max} seats used on your plan.`
+                : ''}
+            </p>
+          </div>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <Input
+              label="Full name"
               required
-              placeholder="Full name"
               value={form.fullName}
               onChange={(e) => setForm({ ...form, fullName: e.target.value })}
-              className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal"
+              placeholder="e.g. Grace Mwale"
             />
-            <input
+            <Input
+              label="Login email"
               required
               type="email"
-              placeholder="Login email"
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
-              className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal"
+              placeholder="staff@shop.com"
             />
-            <input
+            <Input
+              label="Temporary password"
               required
               type="password"
               minLength={8}
-              placeholder="Temporary password (min 8)"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal"
+              placeholder="Min 8 characters"
+              hint="They can change this after first sign-in."
             />
-            <input
-              placeholder="Phone (optional)"
+            <Input
+              label="Phone"
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal"
             />
-            <select
-              value={form.role}
-              onChange={(e) => applyRoleDefaults(e.target.value)}
-              className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal sm:col-span-2"
-            >
-              {(meta?.roles || Object.keys(ROLE_LABELS).filter((r) => r !== 'OWNER')).map(
-                (role) => (
+            <label className="block space-y-1.5 sm:col-span-2">
+              <span className="text-sm font-medium text-ink">Role</span>
+              <select
+                value={form.role}
+                onChange={(e) => applyRoleDefaults(e.target.value)}
+                className="nx-field"
+              >
+                {(
+                  meta?.roles ||
+                  Object.keys(ROLE_LABELS).filter((r) => r !== 'OWNER')
+                ).map((role) => (
                   <option key={role} value={role}>
                     {ROLE_LABELS[role] || role}
                   </option>
-                ),
-              )}
-            </select>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div>
@@ -250,10 +308,11 @@ export function TeamPage() {
               {ALL_PERMISSIONS.map((perm) => (
                 <label
                   key={perm}
-                  className="flex items-center gap-2 rounded-xl border border-line bg-surface/60 px-3 py-2 text-sm"
+                  className="flex min-h-11 items-center gap-2.5 rounded-xl border border-line bg-surface/60 px-3 py-2.5 text-sm"
                 >
                   <input
                     type="checkbox"
+                    className="h-4 w-4 accent-[var(--brand)]"
                     checked={form.permissions.includes(perm)}
                     onChange={(e) => {
                       setForm((f) => ({
@@ -270,10 +329,19 @@ export function TeamPage() {
             </div>
           </div>
 
-          <Button type="submit" disabled={busy}>
-            <Plus className="h-4 w-4" />
-            Create account
-          </Button>
+          <div className="flex flex-wrap gap-2 border-t border-line/70 pt-3">
+            <Button type="submit" disabled={busy} className="min-h-11">
+              <Plus className="h-4 w-4" />
+              {busy ? 'Creating…' : 'Create account'}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+          </div>
         </form>
       ) : null}
 
@@ -303,13 +371,13 @@ export function TeamPage() {
             {members.map((m) => (
               <li
                 key={m.membershipId}
-                className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5"
               >
-                <div>
+                <div className="min-w-0">
                   <p className="font-semibold text-ink">
                     {m.user.fullName}
                     {!m.active ? (
-                      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">
+                      <span className="ml-2 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800 dark:text-amber-200">
                         inactive
                       </span>
                     ) : null}
@@ -345,12 +413,14 @@ export function TeamPage() {
       </div>
 
       {editing ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-ink/55 p-4 backdrop-blur-[2px] sm:items-center">
           <form
             onSubmit={saveEdit}
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-line bg-card p-6 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-line bg-card p-5 shadow-2xl sm:p-6"
           >
-            <h3 className="font-display text-xl font-bold">Edit {editing.user.fullName}</h3>
+            <h3 className="font-display text-xl font-bold text-ink">
+              Edit {editing.user.fullName}
+            </h3>
             <div className="mt-4 space-y-3">
               <input
                 value={editing.user.fullName}
@@ -360,7 +430,7 @@ export function TeamPage() {
                     user: { ...editing.user, fullName: e.target.value },
                   })
                 }
-                className="w-full rounded-xl border border-line px-3 py-2.5 text-sm"
+                className="nx-field"
               />
               <input
                 value={editing.user.phone || ''}
@@ -371,7 +441,7 @@ export function TeamPage() {
                   })
                 }
                 placeholder="Phone"
-                className="w-full rounded-xl border border-line px-3 py-2.5 text-sm"
+                className="nx-field"
               />
               {editing.role !== 'OWNER' ? (
                 <select
@@ -385,7 +455,7 @@ export function TeamPage() {
                       permissions: [...defaults],
                     })
                   }}
-                  className="w-full rounded-xl border border-line px-3 py-2.5 text-sm"
+                  className="nx-field"
                 >
                   {(meta?.roles || []).map((role) => (
                     <option key={role} value={role}>
@@ -425,7 +495,7 @@ export function TeamPage() {
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
                   placeholder="Leave blank to keep current"
-                  className="w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
+                  className="nx-field"
                 />
               </div>
               {editing.role !== 'OWNER' ? (

@@ -1,6 +1,22 @@
-Real business footage used as backgrounds (Pexels — free license):
+Marketing background footage for NEXORA (landing page and sign-in):
 
-- shop-floor.mp4 — Customers shopping in a supermarket (Suika Chan / Pexels #10901926)
-- checkout-live.mp4 — Cashier using a retail register monitor (Gustavo Fring / Pexels #3981582)
+- supermarket-floor-pexels.mp4 / .jpg
+  Busy supermarket produce / butchery floor: shoppers and staff (including
+  Black staff in apron with white and mixed-race shoppers) on a live grocery aisle.
+  Not South Africa–tagged on the source site; chosen as the strongest free
+  multi-racial busy supermarket floor clip after SA-specific free footage
+  was not available under a free license.
+  Source: “Busy Supermarket Aisle with Shoppers” by Kiwi and Camera,
+  Pexels video 39240097.
+  https://www.pexels.com/video/busy-supermarket-aisle-with-shoppers-39240097/
+  License: Pexels License (free to use and adapt, including commercially).
 
-https://www.pexels.com/license/
+- supermarket-checkout-pexels.mp4 / .jpg
+  Supermarket checkout: cashiers and customers at the tills together.
+  Source: “Busy Supermarket Cashier Assisting Customers” by Travel Oyo, Pexels video 36635591.
+  https://www.pexels.com/video/busy-supermarket-cashier-assisting-customers-36635591/
+  License: Pexels License (free to use and adapt, including commercially).
+
+Earlier floor clip (Pexels 8195376 elderly interracial boutique couple) was
+replaced for a clearer busy supermarket vibe. Generated clips
+(shop-floor.mp4, checkout-live.mp4) are no longer used on the landing page.

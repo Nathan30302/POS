@@ -19,10 +19,22 @@ export function isLoopbackOrigin(origin = window.location.origin) {
   return /localhost|127\.0\.0\.1/i.test(origin)
 }
 
-/** Prefer a Wi‑Fi LAN origin so the phone QR is reachable on the same network. */
+/** Prefer HTTPS tunnel / Wi‑Fi origin so the phone QR reaches a secure camera context. */
 export async function resolveShopOrigin(): Promise<string> {
   const current = window.location.origin
   if (!isLoopbackOrigin(current)) return current
+
+  // Static file updated when a quick tunnel starts (no API restart needed)
+  try {
+    const file = await fetch('/shop-origin.json', { cache: 'no-store' })
+    if (file.ok) {
+      const data = (await file.json()) as { preferredOrigin?: string }
+      const origin = data.preferredOrigin?.replace(/\/$/, '')
+      if (origin?.startsWith('http')) return origin
+    }
+  } catch {
+    // continue
+  }
 
   try {
     const res = await fetch('/api/lan')
@@ -46,7 +58,7 @@ export type ScanAck = {
 }
 
 export type ScanPacket =
-  | { type: 'barcode'; code: string; at: number }
+  | { type: 'barcode'; code: string; at: number; intent?: 'add' | 'remove' }
   | { type: 'hello'; device: string }
   | { type: 'ping' }
   | ScanAck

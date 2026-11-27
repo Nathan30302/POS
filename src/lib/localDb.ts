@@ -72,6 +72,8 @@ function normalizeProduct(input: ProductInput) {
       Math.floor(Number(input.low_stock_threshold) || 0),
     ),
     image_url: input.image_url.trim() || null,
+    preferred_supplier_id: input.preferred_supplier_id?.trim() || null,
+    preferred_supplier_name: null as string | null,
   }
 }
 
@@ -239,6 +241,7 @@ export const localDb = {
       card: 0,
       mtn: 0,
       airtel: 0,
+      credit: 0,
       other: 0,
     }
     let total = 0

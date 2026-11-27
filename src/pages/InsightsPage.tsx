@@ -1,10 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
-  Activity,
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
   Banknote,
   Boxes,
   CircleDollarSign,
@@ -20,14 +17,26 @@ import {
   Snowflake,
   Sparkles,
   Target,
-  TrendingDown,
   TrendingUp,
   Users,
   Wallet,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  HealthMeter,
+  InsightCard,
+  MoneyLeaksPanel,
+  MomentumRow,
+  SparkBars,
+  TrustPanel,
+  type BranchHealthItem,
+  type CashierTrustItem,
+  type MoneyLeakItem,
+} from '@/components/growth'
 import { PageHero } from '@/components/PageHero'
 import { ScenarioSimulator } from '@/components/ScenarioSimulator'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
 import { useAuth } from '@/context/AuthContext'
 import { api } from '@/lib/api'
 import { formatZMW } from '@/lib/money'
@@ -41,6 +50,8 @@ type Insight = {
   impact?: string | null
   action?: string | null
   severity: string
+  status?: string
+  active?: boolean
 }
 
 type Mover = {
@@ -64,8 +75,28 @@ type Pulse = {
   productCount: number
   lowStockCount: number
   inventoryValue: number
+  inventoryValueAtSell?: number
   healthScore: number
   series7: Array<{ date: string; revenue: number; tickets: number; profit: number }>
+  forecast?: {
+    days: number
+    projectedRevenue: number
+    daily: Array<{ date: string; projected: number }>
+    method: string
+    confidence: 'low' | 'medium' | 'high'
+    note: string
+    avgDaily7: number
+    trendPct: number
+  }
+  cohorts?: {
+    customersWithSales30: number
+    repeatCustomers30: number
+    repeatRate: number
+    newCustomers30: number
+    avgSpendRepeat: number
+    avgSpendNew: number
+    note: string
+  }
   topProducts: Array<{ name: string; qty: number; revenue: number }>
   rising: Mover[]
   falling: Mover[]
@@ -75,12 +106,32 @@ type Pulse = {
     stockQuantity: number
     lowStockThreshold: number
   }>
+  reorderRecommendations?: Array<{
+    id: string
+    name: string
+    stockQuantity: number
+    lowStockThreshold: number
+    soldLast14Days: number
+    dailyVelocity: number
+    suggestedQty: number
+    preferredSupplier: { id: string; name: string } | null
+    disclaimer: string
+  }>
   paymentBreakdown: Record<string, number>
+  moneyLeaks?: MoneyLeakItem[]
+  leakRiskAmount?: number
+  openStockConflicts?: number
+  expiringLots90?: number
+  cashierTrust?: CashierTrustItem[]
+  branchHealth?: BranchHealthItem[]
   generatedAt?: string
 }
 
 const prompts = [
+  'Where is money leaking?',
   'How can we grow this month?',
+  'Forecast next week revenue',
+  'What is our repeat buyer rate?',
   'How much profit did we make this month?',
   'What sold best in the last 30 days?',
   'Which products are cooling off?',
@@ -112,99 +163,26 @@ function IconBadge({
   )
 }
 
-function HealthRing({ score }: { score: number }) {
-  const r = 42
-  const c = 2 * Math.PI * r
-  const offset = c - (Math.max(0, Math.min(100, score)) / 100) * c
-  const tone =
-    score >= 80 ? '#13b8a6' : score >= 60 ? '#3563e9' : score >= 40 ? '#d97706' : '#dc2626'
-  return (
-    <div className="relative h-28 w-28">
-      <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="8"
-          className="text-line"
-        />
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          stroke={tone}
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={offset}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <p className="font-display text-3xl font-bold text-ink">{score}</p>
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
-          Health
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function BarChart({
-  points,
-}: {
-  points: Array<{ key: string; label: string; value: number }>
-}) {
-  const max = Math.max(1, ...points.map((p) => p.value))
-  return (
-    <div className="flex h-44 items-end gap-2">
-      {points.map((p) => {
-        const pct = Math.max(6, Math.round((p.value / max) * 100))
-        return (
-          <div
-            key={p.key}
-            className="group flex h-full min-w-0 flex-1 flex-col justify-end gap-2"
-          >
-            <div className="relative flex min-h-0 flex-1 items-end">
-              <div
-                className="w-full rounded-t-xl bg-gradient-to-t from-royal to-teal shadow-sm shadow-royal/20 transition group-hover:brightness-110"
-                style={{ height: `${pct}%` }}
-                title={`${p.label}: ${formatZMW(p.value)}`}
-              />
-            </div>
-            <span className="truncate text-center text-[10px] font-semibold uppercase tracking-wide text-ink-soft">
-              {p.label}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function insightMeta(kind: string, severity: string): {
-  icon: LucideIcon
-  tone: 'royal' | 'teal' | 'ok' | 'warn' | 'danger' | 'violet'
-} {
-  if (kind.includes('low_stock') || severity === 'critical') {
-    return { icon: AlertTriangle, tone: 'danger' }
-  }
-  if (kind.includes('slow') || kind.includes('discount')) {
-    return { icon: Snowflake, tone: 'warn' }
-  }
-  if (kind.includes('performance') || kind.includes('margin')) {
-    return { icon: TrendingUp, tone: 'ok' }
-  }
-  if (severity === 'warning') return { icon: AlertTriangle, tone: 'warn' }
-  return { icon: Lightbulb, tone: 'royal' }
-}
-
 function payIcon(method: string): LucideIcon {
   if (method.includes('CARD')) return CreditCard
   if (method.includes('CASH')) return Banknote
   return CircleDollarSign
+}
+
+function healthHint(score: number, pulse: Pulse): string {
+  if (pulse.lowStockCount > 0 && score < 70) {
+    return `${pulse.lowStockCount} low-stock risks are weighing health down — protect those SKUs first.`
+  }
+  if (score >= 80) {
+    return 'Sales, margin, and stock are aligned. Protect winners and keep the trail climbing.'
+  }
+  if (score >= 60) {
+    return 'Solid baseline. Push rising products and clear cool-downs for the next leap.'
+  }
+  if (score >= 40) {
+    return 'Mixed signals. Check Money leaks for discounts, cool-downs, and stock gaps before the week slips.'
+  }
+  return 'Health is strained. Work the Money leaks panel before chasing more volume.'
 }
 
 export function InsightsPage() {
@@ -217,6 +195,8 @@ export function InsightsPage() {
   const [chat, setChat] = useState<Array<{ q: string; a: string }>>([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [askBusy, setAskBusy] = useState(false)
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [briefing, setBriefing] = useState<{
     salesCount: number
@@ -226,6 +206,15 @@ export function InsightsPage() {
     openStockConflicts: number
     note?: string
   } | null>(null)
+
+  function visibleInsights(list: Insight[]) {
+    return list.filter(
+      (i) =>
+        i.active !== false &&
+        i.status !== 'dismissed' &&
+        i.status !== 'resolved',
+    )
+  }
 
   async function load(generate = false) {
     setError('')
@@ -238,7 +227,7 @@ export function InsightsPage() {
         method: 'POST',
       })
     }
-    setInsights(insightData.insights)
+    setInsights(visibleInsights(insightData.insights))
 
     try {
       const brief = await api<{
@@ -262,11 +251,16 @@ export function InsightsPage() {
       setLoading(false)
       return
     }
-    void load(true)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : 'Failed to load Pulse'),
-      )
-      .finally(() => setLoading(false))
+    const run = () => {
+      void load(true)
+        .catch((err) =>
+          setError(err instanceof Error ? err.message : 'Failed to load Pulse'),
+        )
+        .finally(() => setLoading(false))
+    }
+    run()
+    window.addEventListener('nexora-branch', run)
+    return () => window.removeEventListener('nexora-branch', run)
   }, [allowed])
 
   if (!allowed) {
@@ -291,21 +285,47 @@ export function InsightsPage() {
     }
   }
 
+  async function setInsightStatus(
+    id: string,
+    status: 'resolved' | 'dismissed',
+  ) {
+    setStatusBusyId(id)
+    setError('')
+    try {
+      await api(`/insights/${id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      })
+      setInsights((prev) => prev.filter((i) => i.id !== id))
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Could not update insight status',
+      )
+    } finally {
+      setStatusBusyId(null)
+    }
+  }
+
   async function ask(e: FormEvent) {
     e.preventDefault()
-    setBusy(true)
+    const q = question.trim()
+    if (q.length < 2) {
+      setError('Type a short question for Pulse.')
+      return
+    }
+    setAskBusy(true)
     setError('')
     try {
       const data = await api<{ answer: string }>('/insights/ask', {
         method: 'POST',
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question: q }),
       })
       setAnswer(data.answer)
-      setChat((prev) => [{ q: question, a: data.answer }, ...prev].slice(0, 8))
+      setChat((prev) => [{ q, a: data.answer }, ...prev].slice(0, 8))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ask failed')
     } finally {
-      setBusy(false)
+      setAskBusy(false)
     }
   }
 
@@ -315,17 +335,16 @@ export function InsightsPage() {
   const payTotal = payEntries.reduce((s, [, v]) => s + v, 0) || 1
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-5">
       <PageHero
-        eyebrow="Pulse · growth intelligence"
-        title="Ask your business"
-        subtitle="Live signals from real sales — what to push, restock, and protect before the week gets away from you."
+        eyebrow="Shop OS · Pulse"
+        title="Health + integrity"
+        subtitle="Trust signals, leaks, and momentum — refresh anytime."
         actions={
           <Button
             type="button"
             onClick={() => void refreshInsights()}
             disabled={busy || loading}
-            className="bg-[#3563E9] hover:bg-[#2f58d4]"
           >
             <RefreshCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
             Refresh Pulse
@@ -333,54 +352,7 @@ export function InsightsPage() {
         }
       />
 
-      {error ? (
-        <p className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-danger">
-          {error}
-        </p>
-      ) : null}
-
-      {pulse ? (
-        <ScenarioSimulator
-          baselineRevenue30={pulse.revenue30}
-          baselineMargin30={pulse.margin30}
-          avgTicket30={pulse.avgTicket30}
-        />
-      ) : null}
-
-      {briefing ? (
-        <section className="nx-card p-5 sm:p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
-            Daily briefing
-          </p>
-          <div className="mt-3 grid gap-3 sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-ink-soft">Sales today</p>
-              <p className="font-display text-2xl font-bold">{briefing.salesCount}</p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-soft">Revenue</p>
-              <p className="font-display text-2xl font-bold">
-                {formatZMW(briefing.revenue)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-soft">Gross profit</p>
-              <p className="font-display text-2xl font-bold">
-                {formatZMW(briefing.grossProfit)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-ink-soft">Low stock / conflicts</p>
-              <p className="font-display text-2xl font-bold">
-                {briefing.lowStock.length}/{briefing.openStockConflicts}
-              </p>
-            </div>
-          </div>
-          <p className="mt-3 text-xs text-ink-soft">
-            {briefing.note || 'Calculated from completed sales and live stock.'}
-          </p>
-        </section>
-      ) : null}
+      {error ? <FormBanner tone="error">{error}</FormBanner> : null}
 
       {loading && !pulse ? (
         <div className="nx-card flex items-center gap-3 p-8 text-sm text-ink-soft">
@@ -391,50 +363,221 @@ export function InsightsPage() {
 
       {pulse ? (
         <>
-          <section className="nx-card grid gap-6 p-5 sm:grid-cols-[auto_1fr] sm:p-6">
-            <HealthRing score={pulse.healthScore} />
-            <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                {
-                  label: 'Today',
-                  value: formatZMW(pulse.revenueToday),
-                  hint: `${pulse.ticketsToday} tickets`,
-                  icon: Wallet,
-                  tone: 'royal' as const,
-                },
-                {
-                  label: '30-day revenue',
-                  value: formatZMW(pulse.revenue30),
-                  hint: `${pulse.tickets30} sales`,
-                  icon: TrendingUp,
-                  tone: 'teal' as const,
-                },
-                {
-                  label: 'Gross profit',
-                  value: formatZMW(pulse.profit30),
-                  hint: `${(pulse.margin30 * 100).toFixed(1)}% margin`,
-                  icon: Target,
-                  tone: 'ok' as const,
-                },
-              ].map((card) => (
-                <div
-                  key={card.label}
-                  className="rounded-2xl border border-line bg-surface/70 p-4"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-ink-soft">
+          {/* Health + 7-day spark header */}
+          <section className="nx-card grid gap-6 p-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1.2fr)] sm:p-6">
+            <div className="space-y-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-royal">
+                  Shop health
+                </p>
+                <h3 className="font-display mt-0.5 text-lg font-bold text-ink">
+                  How the business is breathing
+                </h3>
+              </div>
+              <HealthMeter
+                score={pulse.healthScore}
+                size="lg"
+                hint={healthHint(pulse.healthScore, pulse)}
+              />
+              {pulse.generatedAt ? (
+                <p className="text-[10px] text-ink-soft">
+                  Updated{' '}
+                  {new Date(pulse.generatedAt).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </p>
+              ) : null}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  {
+                    label: 'Today',
+                    value: formatZMW(pulse.revenueToday),
+                    hint: `${pulse.ticketsToday} tickets`,
+                  },
+                  {
+                    label: '30-day',
+                    value: formatZMW(pulse.revenue30),
+                    hint: `${pulse.tickets30} sales`,
+                  },
+                  {
+                    label: 'Margin',
+                    value: `${(pulse.margin30 * 100).toFixed(1)}%`,
+                    hint: formatZMW(pulse.profit30),
+                  },
+                  ...(pulse.expiringLots90 != null && pulse.expiringLots90 > 0
+                    ? [
+                        {
+                          label: 'Expiring',
+                          value: String(pulse.expiringLots90),
+                          hint: 'lots · 90d',
+                        },
+                      ]
+                    : []),
+                ].map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded-xl border border-line bg-surface/70 px-3 py-2.5"
+                  >
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
                       {card.label}
                     </p>
-                    <IconBadge icon={card.icon} tone={card.tone} />
+                    <p className="font-display mt-1 truncate text-base font-bold text-ink sm:text-lg">
+                      {card.value}
+                    </p>
+                    <p className="mt-0.5 truncate text-[10px] text-ink-soft">
+                      {card.hint}
+                    </p>
                   </div>
-                  <p className="font-display mt-3 text-2xl font-bold text-ink">
-                    {card.value}
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-teal">
+                    7-day trail
                   </p>
-                  <p className="mt-1 text-xs text-ink-soft">{card.hint}</p>
+                  <h3 className="font-display text-lg font-bold text-ink">
+                    Revenue spark
+                  </h3>
+                  <p className="text-xs text-ink-soft">
+                    Daily completed sales · hover for exact take
+                  </p>
                 </div>
-              ))}
+                <Link
+                  to="/app/dashboard"
+                  className="hidden text-xs font-semibold text-royal hover:underline sm:inline"
+                >
+                  Open Command
+                </Link>
+              </div>
+              <SparkBars
+                points={pulse.series7.map((d) => ({
+                  key: d.date,
+                  label: d.date.slice(5),
+                  value: d.revenue,
+                }))}
+                formatValue={formatZMW}
+                heightClass="h-40 sm:h-48"
+              />
             </div>
           </section>
+
+          {pulse.forecast || pulse.cohorts ? (
+            <section className="grid gap-3 sm:grid-cols-2">
+              {pulse.forecast ? (
+                <div className="nx-card space-y-3 p-4 sm:p-5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-royal">
+                    7-day forecast
+                  </p>
+                  <p className="font-display text-2xl font-bold text-ink">
+                    {formatZMW(pulse.forecast.projectedRevenue)}
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    ~{formatZMW(pulse.forecast.avgDaily7)}/day · confidence{' '}
+                    {pulse.forecast.confidence}
+                    {Math.abs(pulse.forecast.trendPct) >= 5
+                      ? ` · trend ${pulse.forecast.trendPct > 0 ? '+' : ''}${pulse.forecast.trendPct}%`
+                      : ''}
+                  </p>
+                  <p className="text-[11px] text-ink-soft">{pulse.forecast.note}</p>
+                  {pulse.forecast.daily.length > 0 ? (
+                    <SparkBars
+                      points={pulse.forecast.daily.map((d) => ({
+                        key: d.date,
+                        label: d.date.slice(5),
+                        value: d.projected,
+                      }))}
+                      formatValue={formatZMW}
+                      heightClass="h-24"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              {pulse.cohorts ? (
+                <div className="nx-card space-y-3 p-4 sm:p-5">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-teal">
+                    Buyer cohorts · 30d
+                  </p>
+                  <p className="font-display text-2xl font-bold text-ink">
+                    {pulse.cohorts.repeatRate}%
+                    <span className="ml-2 text-sm font-semibold text-ink-soft">
+                      repeat
+                    </span>
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    {pulse.cohorts.repeatCustomers30} returning ·{' '}
+                    {pulse.cohorts.newCustomers30} new ·{' '}
+                    {pulse.cohorts.customersWithSales30} tagged
+                  </p>
+                  <p className="text-xs text-ink-soft">
+                    Avg ticket repeat {formatZMW(pulse.cohorts.avgSpendRepeat)} ·
+                    new {formatZMW(pulse.cohorts.avgSpendNew)}
+                  </p>
+                  <p className="text-[11px] text-ink-soft">{pulse.cohorts.note}</p>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {briefing ? (
+            <section className="nx-card p-5 sm:p-6">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
+                Daily briefing
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-4">
+                <div>
+                  <p className="text-xs text-ink-soft">Sales today</p>
+                  <p className="font-display text-2xl font-bold">
+                    {briefing.salesCount}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-soft">Revenue</p>
+                  <p className="font-display text-2xl font-bold">
+                    {formatZMW(briefing.revenue)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-soft">Gross profit</p>
+                  <p className="font-display text-2xl font-bold">
+                    {formatZMW(briefing.grossProfit)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-ink-soft">Low stock / conflicts</p>
+                  <p className="font-display text-2xl font-bold">
+                    {briefing.lowStock.length}/{briefing.openStockConflicts}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-ink-soft">
+                {briefing.note ||
+                  'Calculated from completed sales and live stock.'}
+              </p>
+            </section>
+          ) : null}
+
+          <MoneyLeaksPanel
+            leaks={pulse.moneyLeaks || []}
+            leakRiskAmount={pulse.leakRiskAmount}
+            moreHref="/app/products"
+            moreLabel="Fix stock & prices in Inventory"
+          />
+
+          <TrustPanel
+            cashiers={pulse.cashierTrust}
+            branches={pulse.branchHealth}
+            openConflicts={pulse.openStockConflicts || 0}
+          />
+
+          <ScenarioSimulator
+            baselineRevenue30={pulse.revenue30}
+            baselineMargin30={pulse.margin30}
+            avgTicket30={pulse.avgTicket30}
+          />
 
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {[
@@ -457,7 +600,7 @@ export function InsightsPage() {
                 tone: pulse.lowStockCount > 0 ? ('warn' as const) : ('ok' as const),
               },
               {
-                label: 'Stock value',
+                label: 'Stock at cost',
                 value: formatZMW(pulse.inventoryValue),
                 icon: Boxes,
                 tone: 'teal' as const,
@@ -478,23 +621,53 @@ export function InsightsPage() {
           <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
             <section className="nx-card p-5 sm:p-6">
               <div className="mb-4 flex items-center gap-3">
-                <IconBadge icon={Activity} tone="teal" />
+                <IconBadge icon={Wallet} tone="teal" />
                 <div>
                   <h3 className="font-display text-lg font-bold text-ink">
-                    7-day revenue trail
+                    Profit snapshot
                   </h3>
                   <p className="text-xs text-ink-soft">
-                    Daily completed sales · hover a bar for exact take
+                    30-day gross · discounts {formatZMW(pulse.discount30)}
                   </p>
                 </div>
               </div>
-              <BarChart
-                points={pulse.series7.map((d) => ({
-                  key: d.date,
-                  label: d.date.slice(5),
-                  value: d.revenue,
-                }))}
-              />
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  {
+                    label: 'Revenue',
+                    value: formatZMW(pulse.revenue30),
+                    icon: TrendingUp,
+                    tone: 'royal' as const,
+                  },
+                  {
+                    label: 'Gross profit',
+                    value: formatZMW(pulse.profit30),
+                    icon: Target,
+                    tone: 'ok' as const,
+                  },
+                  {
+                    label: 'Margin',
+                    value: `${(pulse.margin30 * 100).toFixed(1)}%`,
+                    icon: Percent,
+                    tone: 'violet' as const,
+                  },
+                ].map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded-2xl border border-line bg-surface/70 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-ink-soft">
+                        {card.label}
+                      </p>
+                      <IconBadge icon={card.icon} tone={card.tone} />
+                    </div>
+                    <p className="font-display mt-3 text-2xl font-bold text-ink">
+                      {card.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </section>
 
             <section className="nx-card p-5">
@@ -509,7 +682,9 @@ export function InsightsPage() {
               </div>
               <ul className="space-y-2">
                 {pulse.topProducts.length === 0 ? (
-                  <li className="text-sm text-ink-soft">No sales in the last 30 days yet.</li>
+                  <li className="text-sm text-ink-soft">
+                    No sales in the last 30 days yet.
+                  </li>
                 ) : (
                   pulse.topProducts.map((p, i) => (
                     <li
@@ -524,7 +699,9 @@ export function InsightsPage() {
                       </span>
                       <span className="shrink-0 text-right">
                         <strong className="block">{formatZMW(p.revenue)}</strong>
-                        <span className="text-[10px] text-ink-soft">{p.qty} units</span>
+                        <span className="text-[10px] text-ink-soft">
+                          {p.qty} units
+                        </span>
                       </span>
                     </li>
                   ))
@@ -536,9 +713,9 @@ export function InsightsPage() {
           <div className="grid gap-4 lg:grid-cols-3">
             <section className="nx-card p-5">
               <div className="mb-3 flex items-center gap-3">
-                <IconBadge icon={ArrowUpRight} tone="ok" />
+                <IconBadge icon={Flame} tone="ok" />
                 <div>
-                  <h3 className="font-semibold text-ink">Buying more</h3>
+                  <h3 className="font-semibold text-ink">Heating up</h3>
                   <p className="text-xs text-ink-soft">Last 7 days vs week before</p>
                 </div>
               </div>
@@ -549,16 +726,14 @@ export function InsightsPage() {
                   pulse.rising
                     .filter((m) => m.delta > 0)
                     .map((p) => (
-                      <li
+                      <MomentumRow
                         key={p.name}
-                        className="flex items-center justify-between gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm"
-                      >
-                        <span className="truncate">{p.name}</span>
-                        <span className="inline-flex shrink-0 items-center gap-1 font-bold text-emerald-600">
-                          <TrendingUp className="h-3.5 w-3.5" />
-                          {p.priorQty}→{p.recentQty}
-                        </span>
-                      </li>
+                        name={p.name}
+                        recentQty={p.recentQty}
+                        priorQty={p.priorQty}
+                        changePct={p.changePct}
+                        direction="up"
+                      />
                     ))
                 )}
               </ul>
@@ -566,10 +741,10 @@ export function InsightsPage() {
 
             <section className="nx-card p-5">
               <div className="mb-3 flex items-center gap-3">
-                <IconBadge icon={ArrowDownRight} tone="warn" />
+                <IconBadge icon={Snowflake} tone="warn" />
                 <div>
-                  <h3 className="font-semibold text-ink">Buying less</h3>
-                  <p className="text-xs text-ink-soft">Cooling demand · opportunity</p>
+                  <h3 className="font-semibold text-ink">Cooling off</h3>
+                  <p className="text-xs text-ink-soft">Demand dip · opportunity</p>
                 </div>
               </div>
               <ul className="space-y-2">
@@ -577,31 +752,42 @@ export function InsightsPage() {
                   <li className="text-sm text-ink-soft">No cool-downs detected.</li>
                 ) : (
                   pulse.falling.map((p) => (
-                    <li
+                    <MomentumRow
                       key={p.name}
-                      className="flex items-center justify-between gap-2 rounded-xl bg-amber-500/10 px-3 py-2 text-sm"
-                    >
-                      <span className="truncate">{p.name}</span>
-                      <span className="inline-flex shrink-0 items-center gap-1 font-bold text-amber-700 dark:text-amber-300">
-                        <TrendingDown className="h-3.5 w-3.5" />
-                        {p.priorQty}→{p.recentQty}
-                      </span>
-                    </li>
+                      name={p.name}
+                      recentQty={p.recentQty}
+                      priorQty={p.priorQty}
+                      changePct={p.changePct}
+                      direction="down"
+                    />
                   ))
                 )}
               </ul>
             </section>
 
             <section className="nx-card p-5">
-              <div className="mb-3 flex items-center gap-3">
-                <IconBadge
-                  icon={AlertTriangle}
-                  tone={pulse.lowStockCount > 0 ? 'danger' : 'ok'}
-                />
-                <div>
-                  <h3 className="font-semibold text-ink">Stock risks</h3>
-                  <p className="text-xs text-ink-soft">Protect revenue here</p>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-3">
+                  <IconBadge
+                    icon={AlertTriangle}
+                    tone={pulse.lowStockCount > 0 ? 'danger' : 'ok'}
+                  />
+                  <div>
+                    <h3 className="font-semibold text-ink">Stock risks</h3>
+                    <p className="text-xs text-ink-soft">
+                      At cost {formatZMW(pulse.inventoryValue)}
+                      {pulse.inventoryValueAtSell != null
+                        ? ` · at sell ${formatZMW(pulse.inventoryValueAtSell)}`
+                        : ''}
+                    </p>
+                  </div>
                 </div>
+                <Link
+                  to="/app/products"
+                  className="text-xs font-semibold text-royal hover:underline"
+                >
+                  Products
+                </Link>
               </div>
               <ul className="space-y-2">
                 {(pulse.lowStock || []).length === 0 ? (
@@ -620,6 +806,51 @@ export function InsightsPage() {
               </ul>
             </section>
           </div>
+
+          <section className="nx-card p-5">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <h3 className="font-semibold text-ink">Reorder recommendations</h3>
+                <p className="text-xs text-ink-soft">
+                  Based on 14-day velocity + threshold — suggestions, not guarantees
+                </p>
+              </div>
+              <Link
+                to="/app/purchasing"
+                className="text-xs font-semibold text-royal hover:underline"
+              >
+                Purchasing
+              </Link>
+            </div>
+            <ul className="space-y-2">
+              {(pulse.reorderRecommendations || []).length === 0 ? (
+                <li className="text-sm text-ink-soft">
+                  Nothing below threshold right now.
+                </li>
+              ) : (
+                (pulse.reorderRecommendations || []).map((r) => (
+                  <li
+                    key={r.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface/60 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-ink">{r.name}</p>
+                      <p className="text-xs text-ink-soft">
+                        {r.stockQuantity} left · sold {r.soldLast14Days}/14d · ~
+                        {r.dailyVelocity}/day
+                        {r.preferredSupplier
+                          ? ` · ${r.preferredSupplier.name}`
+                          : ''}
+                      </p>
+                    </div>
+                    <strong className="shrink-0 text-royal">
+                      Suggest +{r.suggestedQty}
+                    </strong>
+                  </li>
+                ))
+              )}
+            </ul>
+          </section>
 
           {payEntries.length > 0 ? (
             <section className="nx-card p-5">
@@ -668,7 +899,7 @@ export function InsightsPage() {
           <div>
             <h3 className="font-display text-lg font-bold">Ask NEXORA</h3>
             <p className="text-xs text-ink-soft">
-              Ask in plain language — answers come from your real numbers
+              Plain-language coaching from your real numbers
             </p>
           </div>
         </div>
@@ -695,9 +926,9 @@ export function InsightsPage() {
             className="w-full rounded-xl border border-line bg-card px-3 py-2.5 text-sm outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
             placeholder="Ask about profit, growth, stock, customers…"
           />
-          <Button type="submit" disabled={busy} className="shrink-0">
-            <Sparkles className="h-4 w-4" />
-            Ask Pulse
+          <Button type="submit" disabled={askBusy || loading} className="shrink-0">
+            <Sparkles className={`h-4 w-4 ${askBusy ? 'animate-pulse' : ''}`} />
+            {askBusy ? 'Thinking…' : 'Ask Pulse'}
           </Button>
         </div>
         {answer ? (
@@ -727,61 +958,44 @@ export function InsightsPage() {
       </form>
 
       <section className="space-y-3">
-        <div className="flex items-center gap-3">
-          <IconBadge icon={Lightbulb} tone="teal" />
-          <div>
-            <h3 className="font-display text-lg font-bold text-ink">Growth journal</h3>
-            <p className="text-xs text-ink-soft">
-              Actionable ideas from sales, stock, and margin patterns
-            </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <IconBadge icon={Lightbulb} tone="teal" />
+            <div>
+              <h3 className="font-display text-lg font-bold text-ink">
+                Growth journal
+              </h3>
+              <p className="text-xs text-ink-soft">
+                Mark Done or Dismiss — then jump straight into the fix
+              </p>
+            </div>
           </div>
+          <p className="text-xs text-ink-soft">
+            {insights.length} open coach{insights.length === 1 ? '' : 'es'}
+          </p>
         </div>
         {insights.length === 0 ? (
           <div className="nx-card p-6 text-sm text-ink-soft">
-            No recommendations yet. Hit Refresh Pulse to generate them from live data.
+            No open recommendations. Hit Refresh Pulse to generate them from live
+            data — or you cleared the journal. Nice work.
           </div>
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
-            {insights.map((insight) => {
-              const meta = insightMeta(insight.kind, insight.severity)
-              return (
-                <article key={insight.id} className="nx-card p-5">
-                  <div className="flex items-start gap-3">
-                    <IconBadge icon={meta.icon} tone={meta.tone} />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="font-semibold text-ink">{insight.title}</h3>
-                        <span
-                          className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${
-                            insight.severity === 'critical'
-                              ? 'bg-red-500/15 text-danger'
-                              : insight.severity === 'warning'
-                                ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
-                                : 'bg-brand-soft text-royal'
-                          }`}
-                        >
-                          {insight.severity}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-sm leading-relaxed text-ink-soft">
-                        {insight.summary}
-                      </p>
-                      {insight.impact ? (
-                        <p className="mt-2 text-sm text-ink">
-                          <strong>Impact:</strong> {insight.impact}
-                        </p>
-                      ) : null}
-                      {insight.action ? (
-                        <p className="mt-1 inline-flex items-center gap-1 text-sm font-semibold text-royal">
-                          <Target className="h-3.5 w-3.5" />
-                          {insight.action}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </article>
-              )
-            })}
+            {insights.map((insight) => (
+              <InsightCard
+                key={insight.id}
+                id={insight.id}
+                title={insight.title}
+                summary={insight.summary}
+                impact={insight.impact}
+                action={insight.action}
+                severity={insight.severity}
+                kind={insight.kind}
+                onDone={(id) => void setInsightStatus(id, 'resolved')}
+                onDismiss={(id) => void setInsightStatus(id, 'dismissed')}
+                busy={statusBusyId === insight.id}
+              />
+            ))}
           </div>
         )}
       </section>

@@ -1,0 +1,38 @@
+# NEXORA production-oriented Postgres (optional).
+# Local demo can keep SQLite — see docs/DEPLOY.md
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexora_dev_change_me}
+      POSTGRES_DB: nexora
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - nexora_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora -d nexora"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: run API against Postgres after `npm run db:use-postgres && npm run db:push`
+  # Uncomment when you want containerized API (build first: docker compose build api)
+  # api:
+  #   build: .
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   environment:
+  #     DATABASE_URL: postgresql://nexora:${POSTGRES_PASSWORD:-nexora_dev_change_me}@db:5432/nexora
+  #     NODE_ENV: production
+  #     PORT: 4000
+  #   ports:
+  #     - "4000:4000"
+  #   depends_on:
+  #     db:
+  #       condition: service-healthy
+
+volumes:
+  nexora_pg:

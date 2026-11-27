@@ -38,10 +38,21 @@ export function unlockAudio() {
   tone(40, 10, 0.0001, 'sine')
 }
 
-/** Sharp ShopRite-style till “TING” — instant and loud */
+/** Sharp ShopRite-style till “TING” — add / scan */
 export function playScanBeep() {
+  playAddBeep()
+}
+
+/** Bright rising beep — product added */
+export function playAddBeep() {
   tone(1800, 40, 0.28, 'square')
   window.setTimeout(() => tone(2400, 70, 0.22, 'square'), 32)
+}
+
+/** Lower falling buzz — product removed */
+export function playRemoveBeep() {
+  tone(520, 55, 0.18, 'square')
+  window.setTimeout(() => tone(320, 90, 0.16, 'triangle'), 45)
 }
 
 /** Bigger chime after payment */

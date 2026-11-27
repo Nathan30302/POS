@@ -1,9 +1,6 @@
-export const DEFAULT_MODULES = {
-  sell: true,
-  inventory: true,
-  finance: true,
-  employees: true,
-  crm: true,
-  procurement: true,
-  intelligence: true,
-}
+import { CORE_MODULES, modulesForIndustry } from './industries.js'
+
+/** @deprecated Prefer modulesForIndustry(industry) */
+export const DEFAULT_MODULES = { ...CORE_MODULES }
+
+export { modulesForIndustry }

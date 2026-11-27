@@ -1,3 +1,8 @@
+import {
+  getRequestToPayStatus,
+  momoKeysPresent,
+  requestToPay,
+} from './momoCollection.js'
 import type {
   InitiatePaymentInput,
   InitiatePaymentResult,
@@ -22,7 +27,10 @@ const cashProvider: PaymentProvider = {
 }
 
 /** Manual agent-number path — never auto-confirms MoMo. */
-function manualMomo(id: 'mtn_momo' | 'airtel_money', label: string): PaymentProvider {
+function manualMomo(
+  id: 'mtn_momo' | 'airtel_money',
+  label: string,
+): PaymentProvider {
   return {
     id,
     label,
@@ -40,36 +48,93 @@ function manualMomo(id: 'mtn_momo' | 'airtel_money', label: string): PaymentProv
 }
 
 /**
- * Sandbox stub for MTN Collection API.
- * Requires MOMO_SUBSCRIPTION_KEY + MOMO_API_USER + MOMO_API_KEY to go live.
- * Without credentials, returns pending + clear documentation message.
+ * Live / sandbox MTN Collection API.
+ * Requires MOMO_SUBSCRIPTION_KEY + MOMO_API_USER + MOMO_API_KEY.
+ * Without credentials, returns pending + agent fallback.
  */
-const mtnSandbox: PaymentProvider = {
+const mtnCollection: PaymentProvider = {
   id: 'mtn_momo_sandbox',
-  label: 'MTN MoMo (sandbox)',
+  label: 'MTN MoMo (Collection)',
   async initiate(input): Promise<InitiatePaymentResult> {
-    const sub = process.env.MOMO_SUBSCRIPTION_KEY
-    const user = process.env.MOMO_API_USER
-    const key = process.env.MOMO_API_KEY
-    if (!sub || !user || !key) {
+    if (!momoKeysPresent()) {
       return {
         provider: 'mtn_momo_sandbox',
         status: 'pending',
         message:
-          'MTN sandbox credentials not configured (MOMO_SUBSCRIPTION_KEY, MOMO_API_USER, MOMO_API_KEY). Payment stays pending — use agent fallback or set keys.',
+          'MTN Collection keys not configured (MOMO_SUBSCRIPTION_KEY, MOMO_API_USER, MOMO_API_KEY). Payment stays pending — use agent fallback or set keys.',
         manualFallback: true,
       }
     }
-    // Structure ready for real request-to-pay call
-    return {
-      provider: 'mtn_momo_sandbox',
-      status: 'pending',
-      externalRef: `MOMO-SBX-${Date.now()}`,
-      message: `Sandbox request-to-pay prepared for ${input.amount} ${input.currency} (wire Collection API next).`,
-      manualFallback: false,
+    if (!input.phone?.trim()) {
+      return {
+        provider: 'mtn_momo_sandbox',
+        status: 'pending',
+        message:
+          'Customer phone required for MoMo request-to-pay — fall back to agent number or enter MSISDN.',
+        manualFallback: true,
+      }
+    }
+    try {
+      const result = await requestToPay({
+        amount: input.amount,
+        currency: input.currency,
+        phone: input.phone,
+        externalId: input.clientRef,
+        payerMessage: 'NEXORA payment',
+        payeeNote: input.saleId ? `Sale ${input.saleId.slice(0, 12)}` : 'Shop sale',
+      })
+      if (result.status === 'failed' || !result.referenceId) {
+        return {
+          provider: 'mtn_momo_sandbox',
+          status: 'pending',
+          message: `${result.message} — use agent fallback.`,
+          manualFallback: true,
+        }
+      }
+      return {
+        provider: 'mtn_momo_sandbox',
+        status: 'pending',
+        externalRef: result.referenceId,
+        message: result.message,
+        manualFallback: false,
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'MoMo error'
+      return {
+        provider: 'mtn_momo_sandbox',
+        status: 'pending',
+        message: `${msg} — use agent fallback.`,
+        manualFallback: true,
+      }
     }
   },
-  async poll(_externalRef): Promise<PaymentLifecycle> {
+  async poll(externalRef): Promise<PaymentLifecycle> {
+    if (!externalRef) return 'pending'
+    try {
+      const { status } = await getRequestToPayStatus(externalRef)
+      if (status === 'confirmed') return 'confirmed'
+      if (status === 'failed') return 'failed'
+      if (status === 'cancelled') return 'cancelled'
+      return 'pending'
+    } catch {
+      return 'pending'
+    }
+  },
+}
+
+/** When live keys exist and MOMO_USE_SANDBOX is not forced off, prefer Collection. */
+const mtnLiveOrManual: PaymentProvider = {
+  id: 'mtn_momo',
+  label: 'MTN MoMo',
+  async initiate(input) {
+    if (momoKeysPresent() && process.env.MOMO_FORCE_MANUAL !== '1') {
+      const live = await mtnCollection.initiate(input)
+      return { ...live, provider: 'mtn_momo' }
+    }
+    return manualMomo('mtn_momo', 'MTN MoMo').initiate(input)
+  },
+  async poll(externalRef) {
+    if (mtnCollection.poll) return mtnCollection.poll(externalRef)
     return 'pending'
   },
 }
@@ -120,10 +185,10 @@ const registry: Record<PaymentProviderId, PaymentProvider> = {
   cash: cashProvider,
   card: cardProvider,
   bank_transfer: bankProvider,
-  mtn_momo: manualMomo('mtn_momo', 'MTN MoMo'),
+  mtn_momo: mtnLiveOrManual,
   airtel_money: manualMomo('airtel_money', 'Airtel Money'),
   other: otherProvider,
-  mtn_momo_sandbox: mtnSandbox,
+  mtn_momo_sandbox: mtnCollection,
 }
 
 export function getPaymentProvider(id: string): PaymentProvider {
@@ -131,7 +196,11 @@ export function getPaymentProvider(id: string): PaymentProvider {
 }
 
 export function listPaymentProviders() {
-  return Object.values(registry).map((p) => ({ id: p.id, label: p.label }))
+  return Object.values(registry).map((p) => ({
+    id: p.id,
+    label: p.label,
+    live: p.id.startsWith('mtn') ? momoKeysPresent() : false,
+  }))
 }
 
 export function mapSalePaymentMethod(
@@ -143,7 +212,9 @@ export function mapSalePaymentMethod(
     case 'CARD':
       return 'card'
     case 'MTN_MOMO':
-      return process.env.MOMO_USE_SANDBOX === '1' ? 'mtn_momo_sandbox' : 'mtn_momo'
+      return process.env.MOMO_USE_SANDBOX === '1'
+        ? 'mtn_momo_sandbox'
+        : 'mtn_momo'
     case 'AIRTEL_MONEY':
       return 'airtel_money'
     case 'BANK_TRANSFER':

@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Download, Eye, Receipt, Search } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Download, Eye, Receipt, Store } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { SaleReceiptPanel } from '@/components/SaleReceiptPanel'
+import {
+  ToolbarCard,
+  ToolbarSearch,
+  ToolbarSelect,
+} from '@/components/ToolbarSearch'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
@@ -22,6 +28,8 @@ import {
   type ShopReceiptProfile,
 } from '@/lib/shopProfile'
 
+type RangeKey = 'today' | '7d' | '30d' | 'all'
+
 type ApiSale = {
   id: string
   total: number
@@ -30,6 +38,8 @@ type ApiSale = {
   status: string
   notes: string | null
   createdAt: string
+  soldBy?: { id: string; fullName: string } | null
+  branch?: { id: string; name: string } | null
   items: Array<{
     id: string
     saleId: string
@@ -41,7 +51,13 @@ type ApiSale = {
   }>
 }
 
-function mapSale(sale: ApiSale): SaleWithItems {
+type LedgerSale = SaleWithItems & {
+  cashierName?: string | null
+  branchName?: string | null
+  status?: string
+}
+
+function mapSale(sale: ApiSale): LedgerSale {
   return {
     id: sale.id,
     total: sale.total,
@@ -49,6 +65,9 @@ function mapSale(sale: ApiSale): SaleWithItems {
     payment_method: mapApiPayment(sale.paymentMethod),
     notes: sale.notes,
     created_at: sale.createdAt,
+    cashierName: sale.soldBy?.fullName || null,
+    branchName: sale.branch?.name || null,
+    status: sale.status,
     items: sale.items.map((item) => ({
       id: item.id,
       sale_id: item.saleId,
@@ -61,34 +80,77 @@ function mapSale(sale: ApiSale): SaleWithItems {
   }
 }
 
+function rangeFrom(key: RangeKey): string | null {
+  if (key === 'all') return null
+  const d = new Date()
+  if (key === 'today') {
+    d.setHours(0, 0, 0, 0)
+    return d.toISOString()
+  }
+  d.setDate(d.getDate() - (key === '7d' ? 7 : 30))
+  return d.toISOString()
+}
+
+const RANGES: { key: RangeKey; label: string }[] = [
+  { key: 'today', label: 'Today' },
+  { key: '7d', label: '7 days' },
+  { key: '30d', label: '30 days' },
+  { key: 'all', label: 'All' },
+]
+
 export function SalesPage() {
   const { push } = useToast()
-  const { can } = useAuth()
+  const { user, can } = useAuth()
   const canVoid = can('void_sales')
-  const [sales, setSales] = useState<SaleWithItems[]>([])
-  const [selected, setSelected] = useState<SaleWithItems | null>(null)
+  const [managerPinConfigured, setManagerPinConfigured] = useState(false)
+  const [searchParams] = useSearchParams()
+  const soldByFilter = searchParams.get('soldById') || ''
+  const [sales, setSales] = useState<LedgerSale[]>([])
+  const [selected, setSelected] = useState<LedgerSale | null>(null)
   const [query, setQuery] = useState('')
   const [paymentFilter, setPaymentFilter] = useState<'all' | PaymentMethod>('all')
+  const [range, setRange] = useState<RangeKey>('30d')
   const [error, setError] = useState('')
   const [shop, setShop] = useState<ShopReceiptProfile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
 
-  async function refresh() {
-    const data = await api<{ sales: ApiSale[] }>('/sales')
+  async function refresh(nextRange = range) {
+    const from = rangeFrom(nextRange)
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (soldByFilter) params.set('soldById', soldByFilter)
+    const qs = params.toString() ? `?${params.toString()}` : ''
+    const data = await api<{ sales: ApiSale[] }>(`/sales${qs}`)
     setSales(data.sales.filter((s) => s.status !== 'PARKED').map(mapSale))
   }
 
   useEffect(() => {
     setLoading(true)
-    void refresh()
+    void refresh(range)
       .catch((err) =>
         setError(err instanceof Error ? err.message : 'Failed to load sales'),
       )
       .finally(() => setLoading(false))
+  }, [range, soldByFilter])
+
+  useEffect(() => {
     void fetchShopProfile()
-      .then(setShop)
-      .catch(() => undefined)
-  }, [])
+      .then((profile) =>
+        setShop({
+          ...profile,
+          name: user?.businessName?.trim() || profile.name,
+        }),
+      )
+      .catch(() => {
+        if (user?.businessName) {
+          setShop({ name: user.businessName, currency: 'ZMW' })
+        }
+      })
+    void api<{ configured: boolean }>('/team/manager-pin/status')
+      .then((d) => setManagerPinConfigured(d.configured))
+      .catch(() => setManagerPinConfigured(false))
+  }, [user?.businessName])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -103,16 +165,36 @@ export function SalesPage() {
     })
   }, [sales, query, paymentFilter])
 
-  async function voidSelected() {
-    if (!selected) return
+  const ledgerTotal = useMemo(
+    () => filtered.reduce((sum, sale) => sum + sale.total, 0),
+    [filtered],
+  )
+
+  async function openSale(sale: LedgerSale) {
+    setSelected(sale)
+    setDetailLoading(true)
     try {
-      await api(`/sales/${selected.id}/void`, { method: 'POST' })
-      setSelected(null)
-      await refresh()
-      push('Sale voided · stock restored', 'ok')
-    } catch (err) {
-      push(err instanceof Error ? err.message : 'Could not void sale', 'error')
+      const data = await api<{ sale: ApiSale }>(`/sales/${sale.id}`)
+      setSelected(mapSale(data.sale))
+    } catch {
+      // Keep list payload if detail fetch fails
+    } finally {
+      setDetailLoading(false)
     }
+  }
+
+  async function voidSelected(reason: string, managerPin?: string) {
+    if (!selected) return
+    await api(`/sales/${selected.id}/void`, {
+      method: 'POST',
+      body: JSON.stringify({
+        reason,
+        ...(managerPin ? { managerPin } : {}),
+      }),
+    })
+    setSelected(null)
+    await refresh()
+    push('Sale voided · stock restored', 'ok')
   }
 
   function exportCsv() {
@@ -124,145 +206,262 @@ export function SalesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-4 sm:space-y-5">
       <PageHero
-        eyebrow="Ledger · money trail"
+        eyebrow="Ledger"
         title="Sales ledger"
-        subtitle="Every completed sale, receipts, voids, and CSV export for your books."
+        subtitle="Every completed sale — search the list, filter payments, or jump back to Sell."
         actions={
           <>
+            <Link to="/app/checkout">
+              <Button type="button" variant="secondary">
+                <Store className="h-4 w-4" />
+                Open Sell
+              </Button>
+            </Link>
             <Button
               type="button"
               variant="secondary"
-              onClick={() => void refresh()}
+              onClick={() => {
+                setLoading(true)
+                void refresh()
+                  .catch((err) =>
+                    setError(
+                      err instanceof Error ? err.message : 'Failed to load sales',
+                    ),
+                  )
+                  .finally(() => setLoading(false))
+              }}
             >
               Refresh
             </Button>
             <Button
               type="button"
-              className="bg-[#3563E9] hover:bg-[#2f58d4]"
               onClick={exportCsv}
               disabled={!filtered.length}
             >
               <Download className="h-4 w-4" />
-              Export CSV
+              Export
             </Button>
           </>
         }
       />
 
-      {error ? (
-        <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-danger">{error}</p>
+      {error ? <FormBanner tone="error">{error}</FormBanner> : null}
+      {soldByFilter ? (
+        <FormBanner tone="info">
+          Filtered to one cashier from Trust.{' '}
+          <Link to="/app/sales" className="font-semibold underline">
+            Clear filter
+          </Link>
+        </FormBanner>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
-          <input
+      <ToolbarCard>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {RANGES.map((r) => (
+            <button
+              key={r.key}
+              type="button"
+              onClick={() => setRange(r.key)}
+              aria-pressed={range === r.key}
+              className={`nx-chip min-h-9 ${range === r.key ? 'is-active' : ''}`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.4fr)_minmax(11rem,0.7fr)_auto] lg:items-stretch">
+          <ToolbarSearch
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search receipt or product…"
-            className="w-full rounded-xl border border-line bg-card py-2.5 pl-10 pr-3 text-sm outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
+            placeholder="Receipt, cashier, note…"
+            aria-label="Search sales"
           />
+          <ToolbarSelect
+            value={paymentFilter}
+            onChange={(e) =>
+              setPaymentFilter(e.target.value as 'all' | PaymentMethod)
+            }
+            aria-label="Filter by payment"
+          >
+            <option value="all">All payments</option>
+            {PAYMENT_METHODS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </ToolbarSelect>
+
+          <div className="flex min-h-11 items-center justify-between gap-6 rounded-xl border border-line bg-surface/70 px-3.5 sm:px-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+                Showing
+              </p>
+              <p className="text-sm font-bold tabular-nums text-ink">
+                {filtered.length} sale{filtered.length === 1 ? '' : 's'}
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft">
+                Total
+              </p>
+              <p className="text-sm font-bold tabular-nums text-brand">
+                {formatZMW(ledgerTotal)}
+              </p>
+            </div>
+          </div>
         </div>
-        <select
-          value={paymentFilter}
-          onChange={(e) =>
-            setPaymentFilter(e.target.value as 'all' | PaymentMethod)
-          }
-          className="rounded-xl border border-line bg-card px-3 py-2.5 text-sm"
-        >
-          <option value="all">All payments</option>
-          {PAYMENT_METHODS.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      </ToolbarCard>
 
       <div className="nx-card overflow-hidden">
         {loading ? (
-          <LoadingBlock label="Loading ledger…" />
+          <LoadingBlock label="Loading…" />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={Receipt}
+            title={sales.length === 0 ? 'No sales yet' : 'No matches'}
+            body={
+              sales.length === 0
+                ? 'Complete a sale on Sell — it will appear here with payment, cashier, and receipt detail.'
+                : 'Try another search or payment filter.'
+            }
+            action={
+              sales.length === 0 ? (
+                <Link to="/app/checkout">
+                  <Button type="button">
+                    <Store className="h-4 w-4" />
+                    Go to Sell
+                  </Button>
+                </Link>
+              ) : null
+            }
+          />
         ) : (
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-slate-50 text-ink-soft dark:bg-slate-900/40">
-            <tr>
-              <th className="px-4 py-3 font-medium">Date</th>
-              <th className="px-4 py-3 font-medium">Receipt</th>
-              <th className="px-4 py-3 font-medium">Payment</th>
-              <th className="px-4 py-3 font-medium">Total</th>
-              <th className="px-4 py-3 font-medium" />
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="p-0">
-                  <EmptyState
-                    icon={Receipt}
-                    title={
-                      sales.length === 0
-                        ? 'Ledger is empty'
-                        : 'Nothing matches this filter'
-                    }
-                    body={
-                      sales.length === 0
-                        ? 'Complete a sale on Sell — receipts and voids land here.'
-                        : 'Clear search or switch payment filter to see more.'
-                    }
-                    action={
-                      sales.length === 0 ? (
-                        <Link to="/app/checkout">
-                          <Button type="button">Open Sell</Button>
-                        </Link>
-                      ) : null
-                    }
-                  />
-                </td>
-              </tr>
-            ) : (
-              filtered.map((sale) => (
-                <tr key={sale.id} className="border-t border-line">
-                  <td className="px-4 py-3 text-ink-soft">
-                    {new Date(sale.created_at).toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs">
-                    {sale.id.slice(0, 8).toUpperCase()}
-                  </td>
-                  <td className="px-4 py-3">
-                    {paymentLabel(sale.payment_method)}
-                  </td>
-                  <td className="px-4 py-3 font-semibold">
-                    {formatZMW(sale.total)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 text-sm font-medium text-royal"
-                      onClick={() => setSelected(sale)}
-                    >
+          <>
+            <div className="divide-y divide-line sm:hidden">
+              {filtered.map((sale) => {
+                const qty = sale.items.reduce((n, i) => n + i.quantity, 0)
+                return (
+                  <button
+                    key={sale.id}
+                    type="button"
+                    onClick={() => void openSale(sale)}
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-surface/80 active:bg-surface [content-visibility:auto]"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[0.95rem] font-semibold tabular-nums text-ink">
+                        {formatZMW(sale.total)}
+                      </p>
+                      <p className="mt-0.5 text-xs text-ink-soft">
+                        {paymentLabel(sale.payment_method)} · {qty} item
+                        {qty === 1 ? '' : 's'}
+                        {sale.cashierName ? ` · ${sale.cashierName}` : ''}
+                        {sale.branchName ? ` · ${sale.branchName}` : ''}
+                        {sale.status === 'VOIDED' ? ' · VOID' : ''} ·{' '}
+                        {new Date(sale.created_at).toLocaleString()}
+                      </p>
+                      <p className="mt-0.5 font-mono text-[10px] text-ink-soft">
+                        {sale.id.slice(0, 8).toUpperCase()}
+                      </p>
+                    </div>
+                    <span className="inline-flex min-h-10 shrink-0 items-center gap-1 text-sm font-semibold text-brand">
                       <Eye className="h-4 w-4" />
                       View
-                    </button>
-                  </td>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <table className="hidden min-w-full text-left text-sm sm:table">
+              <thead className="bg-surface/80 text-ink-soft">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Date</th>
+                  <th className="px-4 py-2.5 font-medium">Receipt</th>
+                  <th className="px-4 py-2.5 font-medium">Cashier</th>
+                  <th className="px-4 py-2.5 font-medium">Payment</th>
+                  <th className="px-4 py-2.5 font-medium">Items</th>
+                  <th className="px-4 py-2.5 font-medium">Total</th>
+                  <th className="px-4 py-2.5 font-medium" />
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {filtered.map((sale) => {
+                  const qty = sale.items.reduce((n, i) => n + i.quantity, 0)
+                  return (
+                    <tr
+                      key={sale.id}
+                      className="border-t border-line transition hover:bg-surface/70 [content-visibility:auto]"
+                    >
+                      <td className="px-4 py-2.5 text-ink-soft">
+                        {new Date(sale.created_at).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-ink">
+                        {sale.id.slice(0, 8).toUpperCase()}
+                        {sale.status === 'VOIDED' ? (
+                          <span className="ml-1 text-[10px] font-bold text-danger">
+                            VOID
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-2.5 text-ink">
+                        <span className="block">{sale.cashierName || '—'}</span>
+                        {sale.branchName ? (
+                          <span className="text-xs text-ink-soft">
+                            {sale.branchName}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-2.5 text-ink">
+                        {paymentLabel(sale.payment_method)}
+                      </td>
+                      <td className="px-4 py-2.5 tabular-nums text-ink-soft">
+                        {qty}
+                      </td>
+                      <td className="px-4 py-2.5 font-semibold tabular-nums text-ink">
+                        {formatZMW(sale.total)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <button
+                          type="button"
+                          className="inline-flex min-h-9 items-center gap-1 text-sm font-medium text-brand"
+                          onClick={() => void openSale(sale)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          View
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 
       {selected ? (
         <Modal title="Sale details" onClose={() => setSelected(null)}>
-          <SaleReceiptPanel
-            sale={selected}
-            shop={shop ?? undefined}
-            doneLabel="Close"
-            onDone={() => setSelected(null)}
-            onVoid={canVoid ? voidSelected : undefined}
-          />
+          {detailLoading ? (
+            <LoadingBlock label="Loading…" />
+          ) : (
+            <SaleReceiptPanel
+              sale={selected}
+              shop={shop ?? undefined}
+              doneLabel="Close"
+              onDone={() => setSelected(null)}
+              cashierName={selected.cashierName}
+              branchName={selected.branchName}
+              onVoid={
+                canVoid && selected.status !== 'VOIDED'
+                  ? voidSelected
+                  : undefined
+              }
+              requireManagerPin={managerPinConfigured}
+            />
+          )}
         </Modal>
       ) : null}
     </div>

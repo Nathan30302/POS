@@ -12,29 +12,37 @@ export function PageHero({
   actions?: ReactNode
 }) {
   return (
-    <section className="relative overflow-hidden rounded-[24px] border border-line bg-[#0b1224] p-5 text-white shadow-lg shadow-black/10 sm:p-6">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -right-6 top-0 h-32 w-32 rounded-full bg-royal/40 blur-3xl interior-orb" />
-        <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-teal/30 blur-3xl interior-orb-delay" />
-        <div className="absolute inset-0 opacity-20 landing-grid" />
-      </div>
-      <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <section className="nx-page-hero relative overflow-hidden rounded-[var(--radius-xl)] border border-line bg-card p-4 sm:p-5">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-90"
+        aria-hidden
+        style={{
+          background:
+            'radial-gradient(ellipse 55% 80% at 100% 0%, color-mix(in srgb, var(--royal) 10%, transparent), transparent 55%), radial-gradient(ellipse 40% 60% at 0% 100%, color-mix(in srgb, var(--teal) 8%, transparent), transparent 50%)',
+        }}
+      />
+      <div className="relative z-10 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
         <div className="min-w-0">
-          <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-teal">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+          <p className="nx-eyebrow inline-flex items-center gap-2">
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal"
+              aria-hidden
+            />
             {eyebrow}
           </p>
-          <h2 className="font-display mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
+          <h2 className="font-display mt-1.5 text-[1.45rem] font-bold tracking-tight text-ink sm:text-[1.85rem] sm:leading-tight">
             {title}
           </h2>
           {subtitle ? (
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">
+            <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-ink-soft sm:text-sm">
               {subtitle}
             </p>
           ) : null}
         </div>
         {actions ? (
-          <div className="flex flex-wrap gap-2 sm:justify-end">{actions}</div>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
+            {actions}
+          </div>
         ) : null}
       </div>
     </section>

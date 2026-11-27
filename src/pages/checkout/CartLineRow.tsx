@@ -18,47 +18,49 @@ export function CartLineRow({ line, onSetQty, onRemove }: Props) {
   )
 
   return (
-    <li className="rounded-xl border border-line px-3 py-3">
+    <li className="rounded-xl border border-line bg-card px-3 py-2.5 sm:py-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-medium text-ink">{line.product.name}</p>
-          <p className="text-xs text-ink-soft">
+          <p className="text-sm font-semibold leading-snug text-ink">
+            {line.product.name}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-soft">
             {formatZMW(line.product.selling_price)} each
             {line.quantity >= line.product.stock_quantity ? ' · max stock' : ''}
           </p>
         </div>
         <button
           type="button"
-          className="rounded-lg p-1.5 text-ink-soft hover:bg-red-50 hover:text-danger"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ink-soft transition hover:bg-danger/10 hover:text-danger"
           onClick={() => onRemove(line.product.id)}
           aria-label="Remove"
         >
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
-      <div className="mt-3 flex items-center justify-between">
-        <div className="inline-flex items-center gap-1 rounded-xl bg-surface p-1">
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <div className="inline-flex items-center gap-0.5 rounded-xl border border-line bg-surface p-0.5">
           <button
             type="button"
-            className="touch-manipulation rounded-lg p-2.5 hover:bg-card active:bg-card"
+            className="touch-manipulation flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-card active:bg-card"
             aria-label="Decrease quantity"
             {...minus}
           >
             <Minus className="h-4 w-4" />
           </button>
-          <span className="min-w-9 text-center text-base font-semibold tabular-nums">
+          <span className="min-w-9 text-center text-base font-semibold tabular-nums text-ink">
             {line.quantity}
           </span>
           <button
             type="button"
-            className="touch-manipulation rounded-lg p-2.5 hover:bg-card active:bg-card"
+            className="touch-manipulation flex h-10 w-10 items-center justify-center rounded-lg text-ink hover:bg-card active:bg-card"
             aria-label="Increase quantity"
             {...plus}
           >
             <Plus className="h-4 w-4" />
           </button>
         </div>
-        <p className="font-semibold tabular-nums">
+        <p className="font-semibold tabular-nums text-ink">
           {formatZMW(line.product.selling_price * line.quantity)}
         </p>
       </div>

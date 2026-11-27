@@ -17,11 +17,12 @@ export async function requireAuth(
   next: NextFunction,
 ) {
   try {
-    const header = req.headers.authorization
-    if (!header?.startsWith('Bearer ')) {
+    const { extractAccessToken } = await import('./sessionCookie.js')
+    const token = extractAccessToken(req)
+    if (!token) {
       return res.status(401).json({ error: 'Unauthorized' })
     }
-    const payload = await verifyToken(header.slice(7))
+    const payload = await verifyToken(token)
     req.auth = payload
     req.user = payload
     if (payload.kind === 'business' && payload.businessId) {
@@ -41,6 +42,23 @@ export function requirePlatformAdmin(
 ) {
   if (req.auth?.kind !== 'platform') {
     return res.status(403).json({ error: 'Platform admin only' })
+  }
+  return next()
+}
+
+/** Mutating platform ops — SUPER_ADMIN only (SUPPORT is read-only). */
+export function requirePlatformSuperAdmin(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+) {
+  if (req.auth?.kind !== 'platform') {
+    return res.status(403).json({ error: 'Platform admin only' })
+  }
+  if (req.auth.role !== 'SUPER_ADMIN') {
+    return res
+      .status(403)
+      .json({ error: 'Super admin only — support accounts are read-only' })
   }
   return next()
 }
@@ -70,6 +88,12 @@ export async function requireBusinessMember(
     }
 
     if (req.auth.kind === 'platform') {
+      // SUPPORT may inspect a tenant; only SUPER_ADMIN gets OWNER-level mutations
+      if (req.auth.role === 'SUPPORT' && req.method !== 'GET' && req.method !== 'HEAD') {
+        return res
+          .status(403)
+          .json({ error: 'Support accounts are read-only for shop data' })
+      }
       const businessId =
         (req.headers['x-business-id'] as string | undefined) ||
         (req.query.businessId as string | undefined) ||
@@ -83,17 +107,36 @@ export async function requireBusinessMember(
         where: { id: businessId },
       })
       if (!business) return res.status(404).json({ error: 'Business not found' })
-      if (business.status === 'SUSPENDED') {
-        return res.status(403).json({ error: 'Business account is suspended' })
+      const { refreshSubscriptionState, accessFromBusiness } = await import(
+        './subscription.js'
+      )
+      const live = await refreshSubscriptionState(business.id)
+      const gate = accessFromBusiness(live)
+      if (gate.access === 'blocked') {
+        return res.status(403).json({ error: gate.accessMessage })
       }
-      req.businessId = business.id
-      req.permissions = [...effectivePermissions('OWNER', '[]')]
-      req.membershipRole = 'OWNER'
+      req.businessId = live.id
+      if (req.auth.role === 'SUPPORT') {
+        req.permissions = ['ledger', 'pulse', 'customers']
+        req.membershipRole = 'ACCOUNTANT'
+      } else {
+        req.permissions = [...effectivePermissions('OWNER', '[]')]
+        req.membershipRole = 'OWNER'
+      }
       return next()
     }
 
     if (!req.auth.businessId || !req.auth.membershipId) {
       return res.status(403).json({ error: 'Business membership required' })
+    }
+
+    const { refreshSubscriptionState, accessFromBusiness } = await import(
+      './subscription.js'
+    )
+    const liveBiz = await refreshSubscriptionState(req.auth.businessId)
+    const gate = accessFromBusiness(liveBiz)
+    if (gate.access === 'blocked') {
+      return res.status(403).json({ error: gate.accessMessage })
     }
 
     const membership = await prisma.membership.findFirst({
@@ -103,14 +146,14 @@ export async function requireBusinessMember(
         businessId: req.auth.businessId,
         active: true,
       },
-      include: { business: { select: { status: true } } },
+      include: { user: { select: { active: true } } },
     })
 
     if (!membership) {
       return res.status(403).json({ error: 'Membership not found or inactive' })
     }
-    if (membership.business.status === 'SUSPENDED') {
-      return res.status(403).json({ error: 'Business account is suspended' })
+    if (!membership.user.active) {
+      return res.status(403).json({ error: 'Account deactivated' })
     }
 
     req.businessId = membership.businessId
@@ -123,16 +166,39 @@ export async function requireBusinessMember(
     )
 
     const headerBranch = String(req.headers['x-branch-id'] || '').trim()
-    if (headerBranch) {
+    if (headerBranch === '__all__') {
+      req.orgView = true
+      req.branchId = undefined
+    } else if (headerBranch) {
       const branch = await prisma.branch.findFirst({
         where: { id: headerBranch, businessId: membership.businessId },
       })
-      if (!branch) {
-        return res.status(400).json({ error: 'Unknown branch for this shop' })
+      if (branch) {
+        req.branchId = branch.id
+        req.orgView = false
+      } else {
+        // Stale localStorage from a previous shop/demo — soft-recover instead of 400
+        const { ensureMainBranch } = await import('./branchStock.js')
+        let fallbackId = membership.branchId
+        if (fallbackId) {
+          const owned = await prisma.branch.findFirst({
+            where: { id: fallbackId, businessId: membership.businessId },
+            select: { id: true },
+          })
+          if (!owned) fallbackId = null
+        }
+        if (!fallbackId) {
+          fallbackId = await ensureMainBranch(membership.businessId)
+        }
+        if (!fallbackId) {
+          return res.status(400).json({ error: 'Unknown branch for this shop' })
+        }
+        req.branchId = fallbackId
+        req.orgView = false
       }
-      req.branchId = branch.id
     } else if (membership.branchId) {
       req.branchId = membership.branchId
+      req.orgView = false
     }
 
     return next()
@@ -194,6 +260,40 @@ export function requireManager(
   return next()
 }
 
+/**
+ * Soft commercial gate — plan must include the feature.
+ * TRIAL shops are unlocked so evaluation is not plan-limited.
+ * Use after requireBusinessMember.
+ */
+export function requirePlanFeature(feature: string) {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+      const businessId = req.businessId
+      if (!businessId) {
+        return res.status(403).json({ error: 'Business required' })
+      }
+      const business = await prisma.business.findUnique({
+        where: { id: businessId },
+        select: { plan: true, status: true },
+      })
+      if (!business) {
+        return res.status(404).json({ error: 'Business not found' })
+      }
+      if (business.status === 'TRIAL') return next()
+      const { planIncludesFeature } = await import('./plans.js')
+      if (planIncludesFeature(business.plan, feature)) return next()
+      return res.status(403).json({
+        error: `Your plan does not include “${feature}”. Upgrade to unlock it.`,
+        feature,
+        plan: business.plan,
+      })
+    } catch (err) {
+      console.error(err)
+      return res.status(500).json({ error: 'Plan check failed' })
+    }
+  }
+}
+
 /** Ensure a resource's businessId matches the authenticated tenant. */
 export function tenantGuard(
   resourceBusinessId: string | null | undefined,
@@ -216,6 +316,7 @@ export async function writeAudit(
     meta?: unknown
   } = {},
 ) {
+  const { AUDIT_GENESIS, hashAuditPayload } = await import('./auditChain.js')
   const meta = {
     ...(opts.meta && typeof opts.meta === 'object'
       ? (opts.meta as Record<string, unknown>)
@@ -225,15 +326,44 @@ export async function writeAudit(
     ...(opts.before !== undefined ? { before: opts.before } : {}),
     ...(opts.after !== undefined ? { after: opts.after } : {}),
   }
-  await prisma.auditLog.create({
-    data: {
+  const metaJson = JSON.stringify(meta)
+  const businessId = opts.businessId || null
+
+  // Transaction serializes prior-hash read + append (reduces chain races under load)
+  await prisma.$transaction(async (tx) => {
+    const prior = await tx.auditLog.findFirst({
+      where: businessId
+        ? { businessId, entryHash: { not: null } }
+        : { businessId: null, entryHash: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { entryHash: true },
+    })
+    const prevHash = prior?.entryHash || AUDIT_GENESIS
+    const createdAt = new Date()
+    const entryHash = hashAuditPayload({
+      prevHash,
       action,
-      businessId: opts.businessId || null,
-      userId: opts.userId || null,
       entity: opts.entity,
       entityId: opts.entityId,
-      metaJson: JSON.stringify(meta),
-    },
+      metaJson,
+      userId: opts.userId || null,
+      businessId,
+      createdAtIso: createdAt.toISOString(),
+    })
+
+    await tx.auditLog.create({
+      data: {
+        action,
+        businessId,
+        userId: opts.userId || null,
+        entity: opts.entity,
+        entityId: opts.entityId,
+        metaJson,
+        prevHash,
+        entryHash,
+        createdAt,
+      },
+    })
   })
 }
 

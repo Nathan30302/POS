@@ -74,11 +74,24 @@ export function OnboardingPage() {
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           required
         />
-        <Input
-          label="Industry"
-          value={form.industry}
-          onChange={(e) => setForm((f) => ({ ...f, industry: e.target.value }))}
-        />
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium text-ink">Industry</span>
+          <select
+            className="nx-field"
+            value={form.industry}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, industry: e.target.value }))
+            }
+          >
+            <option value="retail">General retail</option>
+            <option value="pharmacy">Pharmacy</option>
+            <option value="chemist">Chemist</option>
+            <option value="clinic">Clinic dispensary</option>
+            <option value="grocery">Grocery / fresh</option>
+            <option value="stationery">Stationery / school</option>
+            <option value="general">Other</option>
+          </select>
+        </label>
         <Input
           label="Currency"
           value={form.currency}

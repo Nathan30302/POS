@@ -39,7 +39,7 @@ async function main() {
         onboardingComplete: true,
         paymentMethods: ['CASH', 'CARD', 'MTN_MOMO', 'AIRTEL_MONEY'],
       }),
-      plan: 'growth',
+      plan: 'business',
     },
     create: {
       name: 'Demo Stationery',
@@ -52,7 +52,7 @@ async function main() {
         onboardingComplete: true,
         paymentMethods: ['CASH', 'CARD', 'MTN_MOMO', 'AIRTEL_MONEY'],
       }),
-      plan: 'growth',
+      plan: 'business',
       phone: '+260970000001',
       address: 'Cairo Road, Lusaka',
       email: 'hello@demo.shop',

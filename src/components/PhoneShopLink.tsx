@@ -12,9 +12,14 @@ type Props = {
   hint?: string
 }
 
+function isPhoneUa() {
+  if (typeof navigator === 'undefined') return false
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+}
+
 /**
- * Shows the Wi‑Fi shop URL + QR so staff open NEXORA on a phone
- * without typing an IP address.
+ * Laptop-only: Wi‑Fi / HTTPS shop URL + QR so staff open NEXORA on a phone.
+ * Hidden entirely when already on a phone.
  */
 export function PhoneShopLink({
   path = '/login',
@@ -22,11 +27,13 @@ export function PhoneShopLink({
   title = 'Open on your phone',
   hint = 'Same Wi‑Fi as this computer · sign in · use Sell',
 }: Props) {
+  const onPhone = isPhoneUa()
   const [url, setUrl] = useState('')
   const [qr, setQr] = useState('')
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
+    if (onPhone) return
     let cancelled = false
     void resolveShopOrigin().then((origin) => {
       if (cancelled) return
@@ -36,16 +43,18 @@ export function PhoneShopLink({
     return () => {
       cancelled = true
     }
-  }, [path])
+  }, [path, onPhone])
 
   useEffect(() => {
-    if (!url) return
+    if (onPhone || !url) return
     void QRCode.toDataURL(url, {
       width: compact ? 160 : 220,
       margin: 1,
       color: { dark: '#0b1224', light: '#ffffff' },
     }).then(setQr)
-  }, [url, compact])
+  }, [url, compact, onPhone])
+
+  if (onPhone) return null
 
   async function copy() {
     if (!url) return
@@ -126,7 +135,7 @@ export function PhoneShopLink({
             ) : null}
           </div>
           <p className="text-[11px] text-ink-soft">
-            Same network or public HTTPS link · Allow camera · live scan + beep.
+            Laptop shows this QR · phone opens Sell for fast scanning.
           </p>
         </div>
       </div>

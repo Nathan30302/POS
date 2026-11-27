@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react'
-import { ScrollText } from 'lucide-react'
-import { EmptyState } from '@/components/EmptyState'
+import { useSearchParams } from 'react-router-dom'
+import { ScrollText, ShieldCheck } from 'lucide-react'
+import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
+import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
 import { api } from '@/lib/api'
+import {
+  auditActionLabel,
+  auditDetailLine,
+  auditFilterLabel,
+} from '@/lib/auditFormat'
 
 type AuditRow = {
   id: string
@@ -10,15 +18,30 @@ type AuditRow = {
   entity: string | null
   entityId: string | null
   createdAt: string
+  entryHash?: string | null
+  prevHash?: string | null
   user: { id: string; fullName: string; email: string } | null
   meta: Record<string, unknown>
 }
 
+type VerifyResult = {
+  ok: boolean
+  total: number
+  chained: number
+  legacy: number
+  breaks: Array<{ id: string; action: string; reason: string }>
+  checkedAt: string
+}
+
 export function AuditLogPage() {
+  const [searchParams] = useSearchParams()
+  const initialFilter = searchParams.get('action') || ''
   const [logs, setLogs] = useState<AuditRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState(initialFilter)
+  const [verify, setVerify] = useState<VerifyResult | null>(null)
+  const [verifyBusy, setVerifyBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -43,74 +66,117 @@ export function AuditLogPage() {
     }
   }, [filter])
 
+  async function runVerify() {
+    setVerifyBusy(true)
+    setError('')
+    try {
+      const data = await api<VerifyResult>('/audit/verify')
+      setVerify(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verify failed')
+    } finally {
+      setVerifyBusy(false)
+    }
+  }
+
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-4 sm:space-y-5">
       <PageHero
         eyebrow="Accountability"
-        title="Audit log"
-        subtitle="Who changed sales, stock, team, and shop settings — with before/after where recorded."
+        title="Who did what"
+        actions={
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={verifyBusy}
+            onClick={() => void runVerify()}
+          >
+            <ShieldCheck className="h-4 w-4" />
+            {verifyBusy ? 'Checking…' : 'Verify chain'}
+          </Button>
+        }
       />
 
+      {verify ? (
+        <FormBanner tone={verify.ok ? 'ok' : 'error'}>
+          {verify.ok
+            ? `Chain intact · ${verify.chained} hashed rows${
+                verify.legacy ? ` · ${verify.legacy} legacy (pre-chain)` : ''
+              }`
+            : `Chain break · ${verify.breaks.length} issue${
+                verify.breaks.length === 1 ? '' : 's'
+              } (of ${verify.chained} hashed)`}
+        </FormBanner>
+      ) : null}
+
       <div className="flex flex-wrap gap-2">
-        {['', 'sale.', 'product.', 'team.', 'business.'].map((value) => (
+        {[
+          '',
+          'sale.void',
+          'sale.',
+          'shift.',
+          'product.stock_shrink',
+          'product.',
+          'team.',
+          'business.',
+        ].map((value) => (
           <button
             key={value || 'all'}
             type="button"
             onClick={() => setFilter(value)}
-            className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+            className={`min-h-10 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
               filter === value
                 ? 'border-royal bg-royal/15 text-royal'
-                : 'border-line text-ink-soft hover:border-royal/40'
+                : 'border-line bg-card text-ink-soft hover:border-royal/40'
             }`}
           >
-            {value ? value.replace(/\.$/, '') : 'All'}
+            {value === 'shift.' ? 'Shifts' : auditFilterLabel(value)}
           </button>
         ))}
       </div>
 
-      {error ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-danger">
-          {error}
-        </p>
-      ) : null}
+      {error ? <FormBanner tone="error">{error}</FormBanner> : null}
 
       {loading ? (
-        <div className="nx-card space-y-3 p-5">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-xl bg-brand-soft/60" />
-          ))}
+        <div className="nx-card">
+          <LoadingBlock />
         </div>
       ) : logs.length === 0 ? (
-        <EmptyState
-          icon={ScrollText}
-          title="No audit events yet"
-          body="Sales, voids, inventory edits, and team changes will appear here for managers."
-        />
+        <div className="nx-card">
+          <EmptyState icon={ScrollText} title="No events yet" />
+        </div>
       ) : (
         <div className="nx-card overflow-hidden">
           <ul className="divide-y divide-line">
-            {logs.map((log) => (
-              <li key={log.id} className="px-4 py-3 sm:px-5">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-ink">{log.action}</p>
-                    <p className="mt-0.5 text-xs text-ink-soft">
-                      {log.user?.fullName || 'Unknown user'}
-                      {log.entity ? ` · ${log.entity}` : ''}
-                      {log.entityId ? ` · ${log.entityId.slice(0, 8)}…` : ''}
-                    </p>
+            {logs.map((log) => {
+              const label = auditActionLabel(log.action)
+              const detail = auditDetailLine(log.action, log.meta || {}, log.entity)
+              const actor = log.user?.fullName || 'Unknown user'
+              return (
+                <li
+                  key={log.id}
+                  className="px-4 py-3 sm:px-5 [content-visibility:auto]"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-ink">{label}</p>
+                      <p className="mt-0.5 text-sm text-ink-soft">
+                        {actor}
+                        {detail ? ` · ${detail}` : ''}
+                      </p>
+                      {log.entryHash ? (
+                        <p className="mt-0.5 font-mono text-[10px] text-ink-soft/80">
+                          {log.entryHash.slice(0, 12)}…
+                        </p>
+                      ) : null}
+                    </div>
+                    <time className="shrink-0 text-xs text-ink-soft">
+                      {new Date(log.createdAt).toLocaleString()}
+                    </time>
                   </div>
-                  <time className="text-xs text-ink-soft">
-                    {new Date(log.createdAt).toLocaleString()}
-                  </time>
-                </div>
-                {log.meta && Object.keys(log.meta).length > 0 ? (
-                  <pre className="mt-2 overflow-x-auto rounded-lg bg-surface px-3 py-2 text-[11px] text-ink-soft">
-                    {JSON.stringify(log.meta, null, 2)}
-                  </pre>
-                ) : null}
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

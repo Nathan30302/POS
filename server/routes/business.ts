@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { ensureBranchStockSeeded, ensureMainBranch } from '../branchStock.js'
 import {
   requireAuth,
   requireBusinessMember,
@@ -7,7 +8,9 @@ import {
   writeAudit,
   type AuthedRequest,
 } from '../middleware.js'
+import { computeMoneyLeaks } from '../moneyLeaks.js'
 import { prisma } from '../prisma.js'
+import { computeBranchHealth, computeCashierTrust } from '../trust.js'
 
 export const businessRouter = Router()
 businessRouter.use(requireAuth, requireBusinessMember)
@@ -32,17 +35,48 @@ function pctChange(current: number, previous: number) {
 }
 
 businessRouter.get('/me', async (req: AuthedRequest, res) => {
+  await ensureMainBranch(req.businessId!)
+
   const business = await prisma.business.findUnique({
     where: { id: req.businessId! },
     include: { branches: true },
   })
   if (!business) return res.status(404).json({ error: 'Business not found' })
+
+  const settings = JSON.parse(business.settingsJson || '{}') as Record<
+    string,
+    unknown
+  >
+  const productCount = await prisma.product.count({
+    where: { businessId: business.id, active: true },
+  })
+  const hasBranch = business.branches.length > 0
+  const profileNameSet = Boolean(business.name?.trim())
+  const setupDoneAt =
+    typeof settings.setupGuideDoneAt === 'string'
+      ? settings.setupGuideDoneAt
+      : null
+  const setupDismissedAt =
+    typeof settings.setupGuideDismissedAt === 'string'
+      ? settings.setupGuideDismissedAt
+      : null
+  const progressComplete = hasBranch && productCount >= 1 && profileNameSet
+
   res.json({
     business: {
       ...business,
       modules: JSON.parse(business.modulesJson || '{}'),
-      settings: JSON.parse(business.settingsJson || '{}'),
+      settings,
       receipt: JSON.parse(business.receiptJson || '{}'),
+    },
+    setup: {
+      hasBranch,
+      productCount,
+      profileNameSet,
+      progressComplete,
+      doneAt: setupDoneAt,
+      dismissedAt: setupDismissedAt,
+      showGuide: !setupDoneAt && !setupDismissedAt && !progressComplete,
     },
   })
 })
@@ -54,6 +88,7 @@ businessRouter.patch('/me', requireManager, async (req: AuthedRequest, res) => {
       phone: z.string().optional(),
       address: z.string().optional(),
       currency: z.string().optional(),
+      industry: z.string().max(64).optional(),
       logoUrl: z.string().optional(),
       modules: z.record(z.string(), z.boolean()).optional(),
       settings: z.record(z.string(), z.unknown()).optional(),
@@ -67,6 +102,35 @@ businessRouter.patch('/me', requireManager, async (req: AuthedRequest, res) => {
   })
   if (!current) return res.status(404).json({ error: 'Business not found' })
 
+  const nextIndustry = body.data.industry ?? current.industry
+  const industryChanged =
+    body.data.industry !== undefined &&
+    body.data.industry !== current.industry
+
+  const { modulesForIndustry, settingsForIndustry } = await import(
+    '../industries.js'
+  )
+
+  let settingsJson = body.data.settings
+    ? JSON.stringify({
+        ...JSON.parse(current.settingsJson || '{}'),
+        ...body.data.settings,
+      })
+    : current.settingsJson
+  let modulesJson = body.data.modules
+    ? JSON.stringify({
+        ...JSON.parse(current.modulesJson || '{}'),
+        ...body.data.modules,
+      })
+    : current.modulesJson
+
+  if (industryChanged) {
+    modulesJson = JSON.stringify(modulesForIndustry(nextIndustry))
+    settingsJson = JSON.stringify(
+      settingsForIndustry(nextIndustry, JSON.parse(settingsJson || '{}')),
+    )
+  }
+
   const business = await prisma.business.update({
     where: { id: current.id },
     data: {
@@ -74,16 +138,10 @@ businessRouter.patch('/me', requireManager, async (req: AuthedRequest, res) => {
       phone: body.data.phone ?? current.phone,
       address: body.data.address ?? current.address,
       currency: body.data.currency ?? current.currency,
+      industry: nextIndustry,
       logoUrl: body.data.logoUrl ?? current.logoUrl,
-      modulesJson: body.data.modules
-        ? JSON.stringify(body.data.modules)
-        : current.modulesJson,
-      settingsJson: body.data.settings
-        ? JSON.stringify({
-            ...JSON.parse(current.settingsJson || '{}'),
-            ...body.data.settings,
-          })
-        : current.settingsJson,
+      settingsJson,
+      modulesJson,
       receiptJson: body.data.receipt
         ? JSON.stringify(body.data.receipt)
         : current.receiptJson,
@@ -94,10 +152,25 @@ businessRouter.patch('/me', requireManager, async (req: AuthedRequest, res) => {
     userId: req.auth!.sub,
     entity: 'Business',
     entityId: current.id,
-    before: { name: current.name, phone: current.phone },
-    after: { name: business.name, phone: business.phone },
+    before: {
+      name: current.name,
+      phone: current.phone,
+      industry: current.industry,
+    },
+    after: {
+      name: business.name,
+      phone: business.phone,
+      industry: business.industry,
+    },
   })
-  res.json({ business })
+  res.json({
+    business: {
+      ...business,
+      modules: JSON.parse(business.modulesJson || '{}'),
+      settings: JSON.parse(business.settingsJson || '{}'),
+      receipt: JSON.parse(business.receiptJson || '{}'),
+    },
+  })
 })
 
 businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res) => {
@@ -108,65 +181,183 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
   const sixMonthsAgo = addMonths(thisMonth, -5)
   const day14 = new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000)
   const day7 = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+  const day30 = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
+
+  const rangeRaw = String(req.query.range || '30d').toLowerCase()
+  const range: 'today' | '7d' | '30d' =
+    rangeRaw === 'today' || rangeRaw === '7d' || rangeRaw === '30d'
+      ? rangeRaw
+      : '30d'
+  const rangeStart =
+    range === 'today' ? today : range === '7d' ? day7 : day30
+
+  const scopeBranchId =
+    req.orgView || !req.branchId ? null : req.branchId
+  const saleBranchFilter = scopeBranchId
+    ? { branchId: scopeBranchId }
+    : {}
+
+  await ensureBranchStockSeeded(businessId)
+
+  // One lean sales window (6 months) instead of overlapping full payloads
+  const leanSaleSelect = {
+    total: true,
+    discount: true,
+    subtotal: true,
+    paymentMethod: true,
+    createdAt: true,
+    branchId: true,
+    items: {
+      select: {
+        quantity: true,
+        lineTotal: true,
+        costPrice: true,
+        productName: true,
+      },
+    },
+  } as const
 
   const [
-    salesToday,
-    salesThisMonth,
-    salesLastMonth,
     sales6m,
-    sales14d,
     products,
     recentSales,
     expensesMonth,
     customers,
+    creditCustomers,
     insights,
+    trustSales30,
+    branches,
+    shrinkMoves,
+    openConflicts,
+    branchStocks,
   ] = await Promise.all([
-    prisma.sale.findMany({
-      where: { businessId, status: 'COMPLETED', createdAt: { gte: today } },
-      include: { items: true },
-    }),
-    prisma.sale.findMany({
-      where: { businessId, status: 'COMPLETED', createdAt: { gte: thisMonth } },
-      include: { items: true },
-    }),
-    prisma.sale.findMany({
-      where: {
-        businessId,
-        status: 'COMPLETED',
-        createdAt: { gte: lastMonth, lt: thisMonth },
-      },
-      include: { items: true },
-    }),
-    prisma.sale.findMany({
-      where: { businessId, status: 'COMPLETED', createdAt: { gte: sixMonthsAgo } },
-      include: { items: true },
-      orderBy: { createdAt: 'asc' },
-    }),
-    prisma.sale.findMany({
-      where: { businessId, status: 'COMPLETED', createdAt: { gte: day14 } },
-      include: { items: true },
-    }),
-    prisma.product.findMany({ where: { businessId, active: true } }),
-    prisma.sale.findMany({
-      where: { businessId, status: 'COMPLETED' },
-      orderBy: { createdAt: 'desc' },
-      take: 8,
-      include: { items: true },
-    }),
-    prisma.expense.findMany({
-      where: { businessId, spentAt: { gte: thisMonth } },
-    }),
-    prisma.customer.count({ where: { businessId } }),
-    prisma.businessInsight.findMany({
-      where: { businessId, active: true },
-      orderBy: { createdAt: 'desc' },
-      take: 8,
-    }),
-  ])
+      prisma.sale.findMany({
+        where: {
+          businessId,
+          status: 'COMPLETED',
+          createdAt: { gte: sixMonthsAgo },
+          ...saleBranchFilter,
+        },
+        select: leanSaleSelect,
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.product.findMany({
+        where: { businessId, active: true },
+        select: {
+          id: true,
+          name: true,
+          stockQuantity: true,
+          lowStockThreshold: true,
+          costPrice: true,
+          sellingPrice: true,
+        },
+      }),
+      prisma.sale.findMany({
+        where: { businessId, status: 'COMPLETED', ...saleBranchFilter },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          total: true,
+          paymentMethod: true,
+          createdAt: true,
+          soldBy: { select: { fullName: true } },
+          branch: { select: { name: true } },
+        },
+      }),
+      prisma.expense.findMany({
+        where: {
+          businessId,
+          spentAt: { gte: thisMonth },
+          status: { in: ['RECORDED', 'APPROVED'] },
+        },
+        select: { amount: true },
+      }),
+      prisma.customer.count({ where: { businessId } }),
+      prisma.customer.findMany({
+        where: { businessId, balance: { gt: 0 } },
+        select: { id: true, balance: true, updatedAt: true },
+      }),
+      prisma.businessInsight.findMany({
+        where: { businessId, active: true },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          severity: true,
+          title: true,
+          summary: true,
+          action: true,
+        },
+      }),
+      prisma.sale.findMany({
+        where: {
+          businessId,
+          createdAt: { gte: day30 },
+          status: { in: ['COMPLETED', 'VOIDED'] },
+          ...saleBranchFilter,
+        },
+        select: {
+          soldById: true,
+          branchId: true,
+          status: true,
+          total: true,
+          discount: true,
+          subtotal: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.branch.findMany({
+        where: { businessId },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.stockMovement.findMany({
+        where: {
+          businessId,
+          type: 'ADJUSTMENT',
+          quantity: { lt: 0 },
+          createdAt: { gte: day30 },
+          ...(scopeBranchId ? { branchId: scopeBranchId } : {}),
+        },
+        select: {
+          quantity: true,
+          product: { select: { name: true } },
+        },
+        take: 200,
+      }),
+      prisma.stockConflict.count({
+        where: { businessId, status: 'OPEN' },
+      }),
+      prisma.branchStock.findMany({
+        where: { businessId },
+        select: {
+          branchId: true,
+          productId: true,
+          quantity: true,
+        },
+      }),
+    ])
 
-  const sumSales = (rows: typeof salesToday) =>
+  type LeanSale = (typeof sales6m)[number]
+  const salesToday: LeanSale[] = []
+  const salesThisMonth: LeanSale[] = []
+  const salesLastMonth: LeanSale[] = []
+  const sales14d: LeanSale[] = []
+  const sales30d: LeanSale[] = []
+  for (const sale of sales6m) {
+    const at = sale.createdAt
+    if (at >= day30) sales30d.push(sale)
+    if (at >= day14) sales14d.push(sale)
+    if (at >= today) salesToday.push(sale)
+    if (at >= thisMonth) salesThisMonth.push(sale)
+    else if (at >= lastMonth) salesLastMonth.push(sale)
+  }
+
+  const sumSales = (rows: LeanSale[]) =>
     rows.reduce((s, x) => s + x.total, 0)
-  const sumProfit = (rows: typeof salesToday) =>
+  const sumProfit = (rows: LeanSale[]) =>
     rows.reduce(
       (s, sale) =>
         s +
@@ -186,13 +377,92 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
   const ticketsMonth = salesThisMonth.length
   const ticketsLastMonth = salesLastMonth.length
 
-  const inventoryValue = products.reduce(
-    (s, p) => s + p.costPrice * p.stockQuantity,
-    0,
-  )
-  const low = products
-    .filter((p) => p.stockQuantity <= p.lowStockThreshold)
-    .sort((a, b) => a.stockQuantity - b.stockQuantity)
+  const stockByBranchProduct = new Map<string, number>()
+  for (const row of branchStocks) {
+    stockByBranchProduct.set(`${row.branchId}:${row.productId}`, row.quantity)
+  }
+
+  function qtyAtBranch(branchId: string, productId: string) {
+    return stockByBranchProduct.get(`${branchId}:${productId}`) ?? 0
+  }
+
+  const inventoryValue = scopeBranchId
+    ? products.reduce((s, p) => {
+        const q = qtyAtBranch(scopeBranchId, p.id)
+        return s + p.costPrice * q
+      }, 0)
+    : products.reduce((s, p) => s + p.costPrice * p.stockQuantity, 0)
+  const inventoryValueAtSell = scopeBranchId
+    ? products.reduce((s, p) => {
+        const q = qtyAtBranch(scopeBranchId, p.id)
+        return s + p.sellingPrice * q
+      }, 0)
+    : products.reduce((s, p) => s + p.sellingPrice * p.stockQuantity, 0)
+
+  const low = (
+    scopeBranchId
+      ? products
+          .map((p) => ({
+            ...p,
+            stockQuantity: qtyAtBranch(scopeBranchId, p.id),
+          }))
+          .filter((p) => p.stockQuantity <= p.lowStockThreshold)
+      : products.filter((p) => p.stockQuantity <= p.lowStockThreshold)
+  ).sort((a, b) => a.stockQuantity - b.stockQuantity)
+
+  // Branch comparison for HO (range window) — sales already unique by id, no double-count
+  const compareSales = await prisma.sale.findMany({
+    where: {
+      businessId,
+      createdAt: { gte: rangeStart },
+      status: { in: ['COMPLETED', 'VOIDED'] },
+    },
+    select: {
+      id: true,
+      branchId: true,
+      status: true,
+      total: true,
+      discount: true,
+      subtotal: true,
+    },
+  })
+
+  const branchComparison = branches.map((b) => {
+    const rows = compareSales.filter((s) => s.branchId === b.id)
+    const completed = rows.filter((s) => s.status === 'COMPLETED')
+    const voided = rows.filter((s) => s.status === 'VOIDED')
+    const revenue = completed.reduce((s, x) => s + x.total, 0)
+    const tickets = completed.length
+    const discountSum = completed.reduce((s, x) => s + x.discount, 0)
+    const subtotalSum = completed.reduce((s, x) => s + x.subtotal, 0)
+    const voidRate =
+      tickets + voided.length > 0
+        ? Number(
+            ((voided.length / (tickets + voided.length)) * 100).toFixed(1),
+          )
+        : 0
+    const discountRate =
+      subtotalSum > 0
+        ? Number(((discountSum / subtotalSum) * 100).toFixed(1))
+        : 0
+    let lowStock = 0
+    let stockValue = 0
+    for (const p of products) {
+      const q = qtyAtBranch(b.id, p.id)
+      stockValue += p.costPrice * q
+      if (q <= p.lowStockThreshold) lowStock += 1
+    }
+    return {
+      branchId: b.id,
+      branchName: b.name,
+      revenue: Number(revenue.toFixed(2)),
+      tickets,
+      voidRate,
+      discountRate,
+      lowStock,
+      stockValue: Number(stockValue.toFixed(2)),
+    }
+  })
 
   const paymentBreakdown: Record<string, number> = {}
   for (const sale of salesToday) {
@@ -336,7 +606,7 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
         .slice(0, 3)
         .map((p) => `${p.name} (${p.stockQuantity})`)
         .join(', ')}. Lost sales here erase growth gains.`,
-      action: 'Receive or reorder stock today',
+      action: 'Open Inventory to receive or reorder stock',
     })
   }
 
@@ -346,11 +616,71 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
       tone: 'win',
       title: `People keep buying ${topProducts[0].name}`,
       body: `It leads this month with ZMW ${topProducts[0].revenue.toFixed(2)} across ${topProducts[0].qty} units. Double down: never let it stock out, and train staff to suggest it.`,
-      action: 'Pin it as a staff recommendation',
+      action: 'Open Sell to feature it at the counter',
     })
   }
 
-  for (const insight of insights.slice(0, 3)) {
+  const voids30 = trustSales30
+    .filter((s) => s.status === 'VOIDED')
+    .map((s) => ({ total: s.total, createdAt: s.createdAt }))
+  const shrinkUnits = shrinkMoves.reduce((s, m) => s + Math.abs(m.quantity), 0)
+  const shrinkTop = shrinkMoves[0]?.product?.name
+
+  const userIds = [
+    ...new Set(
+      trustSales30.map((s) => s.soldById).filter((id): id is string => !!id),
+    ),
+  ]
+  const trustUsers =
+    userIds.length > 0
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, fullName: true },
+        })
+      : []
+
+  const cashierTrust = computeCashierTrust({
+    sales: trustSales30,
+    users: trustUsers,
+  })
+  const branchHealth = computeBranchHealth({
+    sales: trustSales30,
+    branches,
+  })
+
+  const moneyLeaks = computeMoneyLeaks({
+    sales30: sales30d,
+    products: products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      stockQuantity: p.stockQuantity,
+      lowStockThreshold: p.lowStockThreshold,
+      costPrice: p.costPrice,
+      sellingPrice: p.sellingPrice,
+    })),
+    falling,
+    voids30,
+    shrink30:
+      shrinkUnits > 0
+        ? { units: shrinkUnits, productName: shrinkTop }
+        : undefined,
+    now: today,
+  })
+  const leakRiskAmount = moneyLeaks.reduce((s, l) => s + (l.amount || 0), 0)
+  const trustAlerts = cashierTrust.filter((c) => c.flag !== 'ok').length
+  const branchAlerts = branchHealth.filter((b) => b.flag !== 'ok').length
+
+  for (const leak of moneyLeaks.slice(0, 3)) {
+    journal.push({
+      id: `leak-${leak.id}`,
+      tone: leak.severity === 'info' ? 'focus' : 'risk',
+      title: leak.title,
+      body: leak.why,
+      action: leak.ctaLabel,
+    })
+  }
+
+  for (const insight of insights.slice(0, 2)) {
     journal.push({
       id: insight.id,
       tone:
@@ -363,7 +693,17 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
     })
   }
 
+  const scopeBranch = scopeBranchId
+    ? branches.find((b) => b.id === scopeBranchId)
+    : null
+
   res.json({
+    scope: {
+      mode: scopeBranchId ? 'branch' : 'org',
+      branchId: scopeBranchId,
+      branchName: scopeBranch?.name || null,
+      range,
+    },
     summary: {
       revenueToday: Number(revenueToday.toFixed(2)),
       transactionsToday: salesToday.length,
@@ -385,18 +725,42 @@ businessRouter.get('/dashboard', requireManager, async (req: AuthedRequest, res)
         expensesMonth.reduce((s, e) => s + e.amount, 0).toFixed(2),
       ),
       inventoryValue: Number(inventoryValue.toFixed(2)),
+      inventoryValueAtSell: Number(inventoryValueAtSell.toFixed(2)),
       productCount: products.length,
       lowStockCount: low.length,
       customerCount: customers,
+      creditOutstanding: Number(
+        creditCustomers.reduce((s, c) => s + c.balance, 0).toFixed(2),
+      ),
+      creditOverdueCount: creditCustomers.filter(
+        (c) =>
+          c.updatedAt.getTime() <
+          Date.now() - 30 * 24 * 60 * 60 * 1000,
+      ).length,
+      leakRiskAmount: Number(leakRiskAmount.toFixed(2)),
+      openStockConflicts: openConflicts,
+      trustAlerts,
+      branchAlerts,
       paymentBreakdown,
       liveAt: new Date().toISOString(),
     },
+    branchComparison,
     months,
     rising,
     falling,
     topProducts,
-    journal: journal.slice(0, 8),
+    moneyLeaks,
+    cashierTrust,
+    branchHealth,
+    journal: journal.slice(0, 10),
     lowStock: low.slice(0, 10),
-    recentSales,
+    recentSales: recentSales.map((s) => ({
+      id: s.id,
+      total: s.total,
+      paymentMethod: s.paymentMethod,
+      createdAt: s.createdAt,
+      cashier: s.soldBy?.fullName || null,
+      branchName: s.branch?.name || null,
+    })),
   })
 })

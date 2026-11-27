@@ -1,4 +1,3 @@
-import { jsPDF } from 'jspdf'
 import { formatZMW } from '@/lib/money'
 import type { ShopReceiptProfile } from '@/lib/shopProfile'
 import type { ReceiptTender, SaleWithItems } from '@/types/database'
@@ -7,10 +6,12 @@ import { paymentLabel } from '@/types/database'
 export type ReceiptOptions = {
   shop?: ShopReceiptProfile
   tender?: ReceiptTender
+  cashierName?: string | null
+  branchName?: string | null
 }
 
 function shopName(shop?: ShopReceiptProfile) {
-  return shop?.name?.trim() || 'NEXORA Shop'
+  return shop?.name?.trim() || 'Your shop'
 }
 
 function receiptCode(sale: SaleWithItems) {
@@ -25,6 +26,12 @@ function escapeHtml(value: string) {
     .replaceAll('"', '&quot;')
 }
 
+function changeAmount(sale: SaleWithItems, tender?: ReceiptTender) {
+  if (typeof tender?.cashGiven !== 'number') return null
+  if (typeof tender.changeDue === 'number') return tender.changeDue
+  return Number((tender.cashGiven - sale.total).toFixed(2))
+}
+
 export function formatReceiptText(
   sale: SaleWithItems,
   options: ReceiptOptions = {},
@@ -33,11 +40,14 @@ export function formatReceiptText(
   const name = shopName(options.shop)
   const lines = [
     name,
+    options.shop?.address?.trim() || '',
     options.shop?.phone ? `Tel: ${options.shop.phone}` : '',
     '------------------------------',
     `Receipt: ${receiptCode(sale)}`,
     `Date: ${when}`,
     `Paid: ${paymentLabel(sale.payment_method)}`,
+    options.cashierName ? `Cashier: ${options.cashierName}` : '',
+    options.branchName ? `Branch: ${options.branchName}` : '',
     '------------------------------',
     ...sale.items.map(
       (item) =>
@@ -49,102 +59,152 @@ export function formatReceiptText(
   if (sale.discount > 0) lines.push(`Discount: -${formatZMW(sale.discount)}`)
   lines.push(`TOTAL: ${formatZMW(sale.total)}`)
   if (typeof options.tender?.cashGiven === 'number') {
-    lines.push(`Cash given: ${formatZMW(options.tender.cashGiven)}`)
-  }
-  if (typeof options.tender?.changeDue === 'number') {
-    lines.push(`Change: ${formatZMW(options.tender.changeDue)}`)
+    lines.push(`Cash received: ${formatZMW(options.tender.cashGiven)}`)
+    lines.push(`Change given: ${formatZMW(changeAmount(sale, options.tender) ?? 0)}`)
   }
   lines.push('------------------------------')
   lines.push('Thank you for shopping with us!')
   return lines.join('\n')
 }
 
+/** Fast print HTML — system fonts only (no network font fetch). */
 export function buildReceiptHtml(
   sale: SaleWithItems,
   options: ReceiptOptions = {},
 ) {
   const when = new Date(sale.created_at).toLocaleString()
   const name = shopName(options.shop)
+  const change = changeAmount(sale, options.tender)
   const rows = sale.items
     .map(
       (item) => `
       <tr>
         <td>
           <div class="item">${escapeHtml(item.product_name)}</div>
-          <div class="meta">${item.quantity} × ${formatZMW(item.unit_price)}</div>
+          <div class="item-meta">${item.quantity} × ${formatZMW(item.unit_price)}</div>
         </td>
         <td class="amount">${formatZMW(item.line_total)}</td>
       </tr>`,
     )
     .join('')
 
-  const cashRow =
+  const contactBits = [
+    options.shop?.address?.trim()
+      ? escapeHtml(options.shop.address.trim())
+      : '',
+    options.shop?.phone ? `Tel ${escapeHtml(options.shop.phone)}` : '',
+  ].filter(Boolean)
+
+  const staffBits = [
+    options.cashierName
+      ? `Cashier ${escapeHtml(options.cashierName)}`
+      : '',
+    options.branchName ? escapeHtml(options.branchName) : '',
+  ].filter(Boolean)
+
+  const tenderBlock =
     typeof options.tender?.cashGiven === 'number'
-      ? `<div class="row"><span>Cash given</span><span>${formatZMW(options.tender.cashGiven)}</span></div>`
-      : ''
-  const changeRow =
-    typeof options.tender?.changeDue === 'number'
-      ? `<div class="row strong"><span>Change</span><span>${formatZMW(options.tender.changeDue)}</span></div>`
+      ? `<div class="tender">
+          <div class="tender-title">Cash</div>
+          <div class="row"><span>Amount due</span><span>${formatZMW(sale.total)}</span></div>
+          <div class="row"><span>Cash received</span><span>${formatZMW(options.tender.cashGiven)}</span></div>
+          <div class="row change"><span>Change given</span><span>${formatZMW(change ?? 0)}</span></div>
+        </div>`
       : ''
 
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Receipt ${receiptCode(sale)}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(name)} · Receipt ${receiptCode(sale)}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=Fraunces:opsz,wght@9..144,700&display=swap');
-    :root { --navy:#0b1224; --royal:#3563E9; --teal:#14b8a6; --line:#e2e8f0; }
+    :root { --ink:#0f172a; --soft:#64748b; --line:#e2e8f0; --accent:#0f766e; }
     * { box-sizing: border-box; }
-    body { margin:0; background:#eef2f7; color:var(--navy); font-family:'DM Sans',system-ui,sans-serif; }
+    body {
+      margin: 0;
+      background: #f1f5f9;
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
     .sheet {
-      width: 420px; max-width: 100%; margin: 24px auto; background:#fff;
-      border-radius: 18px; overflow:hidden; box-shadow: 0 18px 50px rgba(11,18,36,.14);
+      width: 380px; max-width: 100%; margin: 16px auto; background: #fff;
+      border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
     }
-    .hero {
-      background: linear-gradient(135deg, #0b1224 0%, #1e3a8a 55%, #0f766e 100%);
-      color:#fff; padding: 28px 24px 22px;
+    .head {
+      text-align: center; padding: 22px 20px 16px;
+      border-bottom: 2px solid var(--ink);
     }
-    .brand { font-size:11px; letter-spacing:.22em; text-transform:uppercase; opacity:.75; }
-    h1 { font-family:'Fraunces',Georgia,serif; font-size:28px; margin:8px 0 4px; font-weight:700; }
-    .sub { font-size:12px; opacity:.85; line-height:1.45; }
-    .body { padding: 22px 24px 28px; }
-    .meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:18px; }
-    .pill { background:#f8fafc; border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
-    .pill span { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.12em; color:#64748b; }
-    .pill strong { display:block; margin-top:4px; font-size:13px; }
-    table { width:100%; border-collapse:collapse; }
-    td { padding:10px 0; border-bottom:1px dashed #dbe3ef; vertical-align:top; font-size:13px; }
-    td.amount { text-align:right; font-weight:600; white-space:nowrap; padding-left:12px; }
-    .item { font-weight:600; }
-    .meta { color:#64748b; font-size:12px; margin-top:2px; }
-    .totals { margin-top:16px; background:#f8fafc; border:1px solid var(--line); border-radius:14px; padding:14px; }
-    .row { display:flex; justify-content:space-between; gap:12px; font-size:13px; margin:6px 0; color:#475569; }
-    .row.strong { color:var(--navy); font-weight:700; font-size:16px; margin-top:10px; }
-    .thanks { margin-top:22px; text-align:center; font-size:12px; color:#64748b; }
-    .mark { margin-top:8px; text-align:center; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:#94a3b8; }
+    .head .eyebrow {
+      font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--soft); font-weight: 700; margin: 0 0 8px;
+    }
+    .head h1 {
+      margin: 0; font-size: 22px; line-height: 1.2; font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .head .contact {
+      margin: 8px 0 0; font-size: 11px; color: var(--soft); line-height: 1.45;
+    }
+    .meta {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      padding: 14px 18px; font-size: 11px;
+    }
+    .meta div span { display: block; color: var(--soft); font-size: 9px;
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px; }
+    .meta div strong { font-size: 12px; font-weight: 700; }
+    .staff {
+      padding: 0 18px 12px; font-size: 11px; color: var(--soft); text-align: center;
+    }
+    .body { padding: 0 18px 20px; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 9px 0; border-bottom: 1px dashed var(--line); vertical-align: top; font-size: 12px; }
+    td.amount { text-align: right; font-weight: 700; white-space: nowrap; padding-left: 10px; }
+    .item { font-weight: 700; }
+    .item-meta { color: var(--soft); font-size: 11px; margin-top: 2px; }
+    .totals { margin-top: 12px; padding-top: 4px; }
+    .row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin: 5px 0; color: #475569; }
+    .row.strong { color: var(--ink); font-weight: 800; font-size: 15px; margin-top: 8px;
+      padding-top: 8px; border-top: 2px solid var(--ink); }
+    .tender {
+      margin-top: 12px; border: 1px solid #a7f3d0; background: #ecfdf5;
+      border-radius: 10px; padding: 12px;
+    }
+    .tender-title {
+      font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+      font-weight: 800; color: #047857; margin-bottom: 6px;
+    }
+    .tender .row { color: #065f46; }
+    .tender .row.change { font-weight: 800; font-size: 14px; color: #047857; margin-top: 6px; }
+    .thanks { margin: 18px 0 0; text-align: center; font-size: 11px; color: var(--soft); }
+    .powered { margin: 6px 0 0; text-align: center; font-size: 9px;
+      letter-spacing: 0.16em; text-transform: uppercase; color: #94a3b8; }
     @media print {
-      body { background:#fff; }
-      .sheet { margin:0; width:100%; box-shadow:none; border-radius:0; }
+      body { background: #fff; }
+      .sheet { margin: 0; width: 100%; max-width: none; border: none; border-radius: 0; }
     }
   </style>
 </head>
 <body>
   <div class="sheet">
-    <div class="hero">
-      <div class="brand">NEXORA receipt</div>
+    <div class="head">
+      <p class="eyebrow">Sale receipt</p>
       <h1>${escapeHtml(name)}</h1>
-      <div class="sub">
-        ${options.shop?.address ? `${escapeHtml(options.shop.address)}<br/>` : ''}
-        ${options.shop?.phone ? `Tel ${escapeHtml(options.shop.phone)}` : ''}
-      </div>
+      ${
+        contactBits.length
+          ? `<p class="contact">${contactBits.join('<br/>')}</p>`
+          : ''
+      }
     </div>
+    <div class="meta">
+      <div><span>Receipt</span><strong>#${receiptCode(sale)}</strong></div>
+      <div><span>Payment</span><strong>${escapeHtml(paymentLabel(sale.payment_method))}</strong></div>
+      <div style="grid-column:1/-1"><span>Date</span><strong>${escapeHtml(when)}</strong></div>
+    </div>
+    ${staffBits.length ? `<p class="staff">${staffBits.join(' · ')}</p>` : ''}
     <div class="body">
-      <div class="meta-grid">
-        <div class="pill"><span>Receipt</span><strong>#${receiptCode(sale)}</strong></div>
-        <div class="pill"><span>Payment</span><strong>${escapeHtml(paymentLabel(sale.payment_method))}</strong></div>
-        <div class="pill" style="grid-column:1/-1"><span>Date</span><strong>${escapeHtml(when)}</strong></div>
-      </div>
       <table>${rows}</table>
       <div class="totals">
         ${
@@ -153,11 +213,10 @@ export function buildReceiptHtml(
             : ''
         }
         <div class="row strong"><span>Total</span><span>${formatZMW(sale.total)}</span></div>
-        ${cashRow}
-        ${changeRow}
       </div>
-      <p class="thanks">Thank you for shopping with us. Keep this receipt for your records.</p>
-      <p class="mark">Powered by NEXORA</p>
+      ${tenderBlock}
+      <p class="thanks">Thank you for shopping with ${escapeHtml(name)}.</p>
+      <p class="powered">Powered by NEXORA</p>
     </div>
   </div>
   <script>window.onload = () => { window.print(); }</script>
@@ -167,7 +226,7 @@ export function buildReceiptHtml(
 
 export function printReceipt(sale: SaleWithItems, options: ReceiptOptions = {}) {
   const html = buildReceiptHtml(sale, options)
-  const frame = window.open('', '_blank', 'width=480,height=720')
+  const frame = window.open('', '_blank', 'width=440,height=720')
   if (!frame) {
     throw new Error('Pop-up blocked. Allow pop-ups to print the receipt.')
   }
@@ -180,66 +239,85 @@ export async function buildReceiptPdf(
   sale: SaleWithItems,
   options: ReceiptOptions = {},
 ) {
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+  const { jsPDF } = await import('jspdf')
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', compress: true })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 48
   const contentW = pageW - margin * 2
   const name = shopName(options.shop)
   const when = new Date(sale.created_at).toLocaleString()
+  const change = changeAmount(sale, options.tender)
 
-  // Hero banner
-  doc.setFillColor(11, 18, 36)
-  doc.rect(0, 0, pageW, 132, 'F')
-  doc.setFillColor(53, 99, 233)
-  doc.rect(0, 132, pageW, 4, 'F')
-  doc.setFillColor(20, 184, 166)
-  doc.rect(0, 136, pageW, 3, 'F')
+  // Top accent bar
+  doc.setFillColor(15, 118, 110)
+  doc.rect(0, 0, pageW, 6, 'F')
 
-  doc.setTextColor(148, 163, 184)
-  doc.setFont('helvetica', 'normal')
+  let y = 40
+  doc.setTextColor(100, 116, 139)
+  doc.setFont('helvetica', 'bold')
   doc.setFontSize(9)
-  doc.text('NEXORA OFFICIAL RECEIPT', margin, 36)
+  doc.text('SALE RECEIPT', pageW / 2, y, { align: 'center' })
+  y += 22
 
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(15, 23, 42)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(26)
-  doc.text(name.slice(0, 42), margin, 72)
+  doc.setFontSize(22)
+  const nameLines = doc.splitTextToSize(name, contentW)
+  doc.text(nameLines, pageW / 2, y, { align: 'center' })
+  y += nameLines.length * 24 + 4
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
-  const heroLines: string[] = []
-  if (options.shop?.address) heroLines.push(options.shop.address)
-  if (options.shop?.phone) heroLines.push(`Tel ${options.shop.phone}`)
-  doc.setTextColor(203, 213, 225)
-  doc.text(heroLines.join('  ·  ') || 'Premium shop receipt', margin, 98)
-
-  let y = 176
-  doc.setTextColor(11, 18, 36)
   doc.setFontSize(10)
+  doc.setTextColor(100, 116, 139)
+  const contact: string[] = []
+  if (options.shop?.address?.trim()) contact.push(options.shop.address.trim())
+  if (options.shop?.phone) contact.push(`Tel ${options.shop.phone}`)
+  if (contact.length) {
+    const contactLines = doc.splitTextToSize(contact.join('  ·  '), contentW)
+    doc.text(contactLines, pageW / 2, y, { align: 'center' })
+    y += contactLines.length * 13 + 8
+  }
+
+  doc.setDrawColor(15, 23, 42)
+  doc.setLineWidth(1.2)
+  doc.line(margin, y, pageW - margin, y)
+  y += 20
+
   doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(15, 23, 42)
   doc.text(`Receipt #${receiptCode(sale)}`, margin, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(when, pageW - margin, y, { align: 'right' })
-  y += 18
   doc.setTextColor(71, 85, 105)
+  doc.text(when, pageW - margin, y, { align: 'right' })
+  y += 16
   doc.text(`Payment · ${paymentLabel(sale.payment_method)}`, margin, y)
-  y += 28
+  y += 14
+  const staff = [
+    options.cashierName ? `Cashier ${options.cashierName}` : '',
+    options.branchName ? options.branchName : '',
+  ]
+    .filter(Boolean)
+    .join('  ·  ')
+  if (staff) {
+    doc.text(staff, margin, y)
+    y += 18
+  } else {
+    y += 8
+  }
 
   // Table header
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(margin, y - 14, contentW, 28, 6, 6, 'F')
+  doc.roundedRect(margin, y - 12, contentW, 24, 4, 4, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setTextColor(100, 116, 139)
-  doc.setFontSize(9)
-  doc.text('ITEM', margin + 12, y + 2)
+  doc.setFontSize(8)
+  doc.text('ITEM', margin + 10, y + 2)
   doc.text('QTY', margin + contentW * 0.58, y + 2)
-  doc.text('AMOUNT', pageW - margin - 12, y + 2, { align: 'right' })
-  y += 28
+  doc.text('AMOUNT', pageW - margin - 10, y + 2, { align: 'right' })
+  y += 24
 
-  doc.setFont('helvetica', 'normal')
-  doc.setTextColor(15, 23, 42)
   doc.setFontSize(11)
-
   for (const item of sale.items) {
     if (y > 700) {
       doc.addPage()
@@ -247,6 +325,7 @@ export async function buildReceiptPdf(
     }
     const title = doc.splitTextToSize(item.product_name, contentW * 0.52)
     doc.setFont('helvetica', 'bold')
+    doc.setTextColor(15, 23, 42)
     doc.text(title, margin + 4, y)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 116, 139)
@@ -262,78 +341,76 @@ export async function buildReceiptPdf(
     doc.text(formatZMW(item.line_total), pageW - margin - 4, y, {
       align: 'right',
     })
-    y += Math.max(22, title.length * 14)
+    y += Math.max(20, title.length * 13) + 4
     doc.setDrawColor(226, 232, 240)
-    doc.line(margin, y - 8, pageW - margin, y - 8)
+    doc.setLineWidth(0.5)
+    doc.line(margin, y - 6, pageW - margin, y - 6)
   }
 
-  y += 18
-  const boxH =
-    64 +
-    (sale.discount > 0 ? 18 : 0) +
-    (typeof options.tender?.cashGiven === 'number' ? 18 : 0) +
-    (typeof options.tender?.changeDue === 'number' ? 18 : 0)
-
+  y += 14
+  const totalsH = 44 + (sale.discount > 0 ? 16 : 0)
   doc.setFillColor(248, 250, 252)
   doc.setDrawColor(226, 232, 240)
-  doc.roundedRect(margin, y, contentW, boxH, 10, 10, 'FD')
+  doc.roundedRect(margin, y, contentW, totalsH, 8, 8, 'FD')
 
-  let ty = y + 22
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
-  doc.setTextColor(71, 85, 105)
-
+  let ty = y + 18
   if (sale.discount > 0) {
-    doc.text('Discount', margin + 16, ty)
-    doc.text(`-${formatZMW(sale.discount)}`, pageW - margin - 16, ty, {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(71, 85, 105)
+    doc.text('Discount', margin + 14, ty)
+    doc.text(`-${formatZMW(sale.discount)}`, pageW - margin - 14, ty, {
       align: 'right',
     })
-    ty += 18
+    ty += 16
   }
-
   doc.setFont('helvetica', 'bold')
-  doc.setTextColor(11, 18, 36)
-  doc.setFontSize(14)
-  doc.text('TOTAL', margin + 16, ty)
-  doc.text(formatZMW(sale.total), pageW - margin - 16, ty, { align: 'right' })
-  ty += 20
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
-  doc.setTextColor(51, 65, 85)
+  doc.setTextColor(15, 23, 42)
+  doc.setFontSize(13)
+  doc.text('TOTAL', margin + 14, ty)
+  doc.text(formatZMW(sale.total), pageW - margin - 14, ty, { align: 'right' })
+  y += totalsH + 14
 
   if (typeof options.tender?.cashGiven === 'number') {
-    doc.text('Cash given', margin + 16, ty)
-    doc.text(formatZMW(options.tender.cashGiven), pageW - margin - 16, ty, {
-      align: 'right',
-    })
-    ty += 18
-  }
-  if (typeof options.tender?.changeDue === 'number') {
+    const tenderH = 78
+    doc.setFillColor(236, 253, 245)
+    doc.setDrawColor(167, 243, 208)
+    doc.roundedRect(margin, y, contentW, tenderH, 8, 8, 'FD')
     doc.setFont('helvetica', 'bold')
-    doc.setTextColor(5, 150, 105)
-    doc.text('Change due', margin + 16, ty)
-    doc.text(formatZMW(options.tender.changeDue), pageW - margin - 16, ty, {
+    doc.setFontSize(8)
+    doc.setTextColor(4, 120, 87)
+    doc.text('CASH', margin + 14, y + 18)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(10)
+    doc.setTextColor(6, 95, 70)
+    doc.text('Cash received', margin + 14, y + 38)
+    doc.setFont('helvetica', 'bold')
+    doc.text(formatZMW(options.tender.cashGiven), pageW - margin - 14, y + 38, {
       align: 'right',
     })
+    doc.setFontSize(12)
+    doc.setTextColor(4, 120, 87)
+    doc.text('Change given', margin + 14, y + 60)
+    doc.text(formatZMW(change ?? 0), pageW - margin - 14, y + 60, {
+      align: 'right',
+    })
+    y += tenderH + 24
+  } else {
+    y += 18
   }
 
-  y += boxH + 36
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(100, 116, 139)
-  doc.setFontSize(11)
-  doc.text(
-    'Thank you for shopping with us. This is your official sale receipt.',
-    pageW / 2,
-    y,
-    { align: 'center' },
-  )
-  y += 20
-  doc.setFontSize(9)
+  doc.setFontSize(10)
+  doc.text(`Thank you for shopping with ${name}.`, pageW / 2, y, {
+    align: 'center',
+  })
+  y += 16
+  doc.setFontSize(8)
   doc.setTextColor(148, 163, 184)
   doc.text('POWERED BY NEXORA', pageW / 2, y, { align: 'center' })
 
-  const filename = `NEXORA-Receipt-${receiptCode(sale)}.pdf`
+  const filename = `${name.replace(/[^\w\-]+/g, '_').slice(0, 40)}-Receipt-${receiptCode(sale)}.pdf`
   const blob = doc.output('blob')
   return { doc, blob, filename }
 }
@@ -393,7 +470,6 @@ export async function sendWhatsAppReceiptPdf(
     return { mode: 'share' as const, filename }
   }
 
-  // Desktop / unsupported share: download PDF, open WhatsApp chat
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

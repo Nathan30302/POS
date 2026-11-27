@@ -9,6 +9,12 @@ export type Product = {
   stock_quantity: number
   low_stock_threshold: number
   image_url: string | null
+  preferred_supplier_id?: string | null
+  preferred_supplier_name?: string | null
+  track_expiry?: boolean
+  expiry_date?: string | null
+  requires_prescription?: boolean
+  open_batches?: number
   created_at: string
   updated_at: string
 }
@@ -23,9 +29,12 @@ export type ProductInput = {
   stock_quantity: number
   low_stock_threshold: number
   image_url: string
+  preferred_supplier_id?: string
+  track_expiry?: boolean
+  requires_prescription?: boolean
 }
 
-export type PaymentMethod = 'cash' | 'card' | 'mtn' | 'airtel' | 'other'
+export type PaymentMethod = 'cash' | 'card' | 'mtn' | 'airtel' | 'credit' | 'other'
 
 export type Sale = {
   id: string
@@ -71,11 +80,27 @@ export const PRODUCT_CATEGORIES = [
   'General',
 ] as const
 
+export const PHARMACY_CATEGORIES = [
+  'Analgesics',
+  'Antibiotics',
+  'Antimalarials',
+  'Cough & cold',
+  'Vitamins',
+  'Dermatology',
+  'Diabetes',
+  'Hypertension',
+  'First aid',
+  'OTC',
+  'Prescription',
+  'General',
+] as const
+
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: 'cash', label: 'Cash' },
   { value: 'mtn', label: 'MTN MoMo' },
   { value: 'airtel', label: 'Airtel Money' },
   { value: 'card', label: 'Card' },
+  { value: 'credit', label: 'Credit' },
   { value: 'other', label: 'Other' },
 ]
 
@@ -84,6 +109,7 @@ export const PAYMENT_API: Record<PaymentMethod, string> = {
   card: 'CARD',
   mtn: 'MTN_MOMO',
   airtel: 'AIRTEL_MONEY',
+  credit: 'CREDIT',
   other: 'OTHER',
 }
 
@@ -95,6 +121,8 @@ export function mapApiPayment(method: string): PaymentMethod {
       return 'mtn'
     case 'AIRTEL_MONEY':
       return 'airtel'
+    case 'CREDIT':
+      return 'credit'
     case 'OTHER':
     case 'ZAMTEL':
     case 'BANK_TRANSFER':
@@ -117,11 +145,13 @@ export function apiPaymentLabel(method: string) {
     method === 'card' ||
     method === 'mtn' ||
     method === 'airtel' ||
+    method === 'credit' ||
     method === 'other'
   ) {
     return paymentLabel(method)
   }
   if (method === 'BANK_TRANSFER') return 'Bank transfer'
   if (method === 'ZAMTEL') return 'Zamtel'
+  if (method === 'CREDIT') return 'Credit'
   return paymentLabel(mapped)
 }

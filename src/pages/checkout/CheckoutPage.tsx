@@ -1,37 +1,62 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { Link } from 'react-router-dom'
 import {
+  BookOpen,
   Eraser,
   PackageOpen,
   ScanLine,
   Search,
   Smartphone,
 } from 'lucide-react'
-import { BarcodeScanner } from '@/components/BarcodeScanner'
+
+/** ZXing lives here — keep Sell chunk lean until Scan opens */
+const BarcodeScanner = lazy(() =>
+  import('@/components/BarcodeScanner').then((m) => ({
+    default: m.BarcodeScanner,
+  })),
+)
 import { EmptyState } from '@/components/EmptyState'
+import { PageHero } from '@/components/PageHero'
 import { PhonePairPanel } from '@/components/PhonePairPanel'
+import { OfflineQueuePanel } from '@/components/OfflineQueuePanel'
+import { PhoneShopLink } from '@/components/PhoneShopLink'
 import { SaleReceiptPanel } from '@/components/SaleReceiptPanel'
+import { ShiftDrawerPanel } from '@/components/ShiftDrawerPanel'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/context/AuthContext'
-import { useOfflineSalesSync } from '@/hooks/useOfflineSalesSync'
+import { useOfflineSync } from '@/context/OfflineSyncContext'
+import { useCheckoutCart } from '@/hooks/useCheckoutCart'
 import { useProducts } from '@/hooks/useProducts'
 import { useVirtualGrid } from '@/hooks/useVirtualGrid'
 import { CartLineRow } from '@/pages/checkout/CartLineRow'
 import { CatalogueTile } from '@/pages/checkout/CatalogueTile'
 import { api } from '@/lib/api'
 import { buildProductIndex, findProductByCode } from '@/lib/findProduct'
+import { getActiveBranchId } from '@/lib/branch'
 import { enqueueSale, isProbablyOffline } from '@/lib/offlineQueue'
 import { formatZMW } from '@/lib/money'
 import { loyaltyDiscountKwacha, suggestTenders } from '@/lib/tender'
 import type { ScanResult } from '@/lib/peerRoom'
 import {
+  playAddBeep,
   playErrorBuzz,
-  playScanBeep,
+  playRemoveBeep,
   playSuccessChime,
   unlockAudio,
 } from '@/lib/sounds'
+import { speakSaleThanks } from '@/lib/voiceThanks'
 import {
   fetchShopProfile,
   type ShopReceiptProfile,
@@ -50,12 +75,30 @@ type ScanStatus = {
 
 export function CheckoutPage() {
   const { push } = useToast()
-  const { can } = useAuth()
+  const { user, can } = useAuth()
   const canDiscount = can('discounts')
-  const { products, loading, refresh, applyStockDeltas } = useProducts()
+  const canCredit = can('credit_sales')
+  const {
+    products,
+    loading,
+    error: productsError,
+    refresh,
+    applyStockDeltas,
+  } = useProducts({ lean: true })
+  const {
+    cart,
+    setCart,
+    setQty,
+    removeLine,
+    clearCart: emptyCart,
+    restoreCart,
+  } = useCheckoutCart()
   const [query, setQuery] = useState('')
-  const [cart, setCart] = useState<CartLine[]>([])
   const [discount, setDiscount] = useState(0)
+  const [discountReason, setDiscountReason] = useState('')
+  const [prescriptionNote, setPrescriptionNote] = useState('')
+  const [managerPin, setManagerPin] = useState('')
+  const [managerPinConfigured, setManagerPinConfigured] = useState(false)
   const [cashReceived, setCashReceived] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash')
   const [scanOpen, setScanOpen] = useState(false)
@@ -64,7 +107,7 @@ export function CheckoutPage() {
     'waiting' | 'connected' | 'error'
   >('waiting')
   const [scanStatus, setScanStatus] = useState<ScanStatus>({
-    message: 'Point at barcode',
+    message: '',
     tone: 'idle',
   })
   const [flash, setFlash] = useState('')
@@ -81,35 +124,61 @@ export function CheckoutPage() {
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [customerLabel, setCustomerLabel] = useState('')
   const [customerPts, setCustomerPts] = useState(0)
+  const [customerBalance, setCustomerBalance] = useState(0)
+  const [customerCreditLimit, setCustomerCreditLimit] = useState(0)
   const [customerBusy, setCustomerBusy] = useState(false)
-  const [showPathTip, setShowPathTip] = useState(() => {
-    try {
-      return localStorage.getItem('nexora-sell-path-tip') !== '1'
-    } catch {
-      return true
-    }
-  })
-  const { online, pendingCount, syncing, syncAll } = useOfflineSalesSync(true)
+  const {
+    online,
+    queue,
+    pendingCount,
+    conflictCount,
+    syncing,
+    lastSyncAt,
+    lastSyncError,
+    syncAll,
+    retryWithConflictAccept,
+    dropSale,
+  } = useOfflineSync()
   const isPhone =
     typeof navigator !== 'undefined' &&
     /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
   const barcodeTimerRef = useRef<number | null>(null)
+  const barcodeBurstRef = useRef(false)
+  const lastBarcodeKeyAtRef = useRef(0)
+  /**
+   * HID wedge inter-key gap. Laptops/USB guns often 20–90ms; keep burst detection
+   * wide enough to stitch the code, then settle fast on desktop only.
+   * Phone path uses the same burst flag but slower settle below — do not tighten
+   * phone camera UX here.
+   */
+  const WEDGE_BURST_MS = isPhone ? 85 : 110
   const searchRef = useRef<HTMLInputElement | null>(null)
   const catalogueScrollRef = useRef<HTMLDivElement | null>(null)
   const [catalogueCols, setCatalogueCols] = useState(isPhone ? 2 : 3)
   const keepScanOpenRef = useRef(false)
+  /** Last successful scan-add — rescan same product within window undoes −1 */
+  const lastScanAddRef = useRef<{ productId: string; at: number } | null>(null)
   const cartRef = useRef(cart)
   cartRef.current = cart
   const productsRef = useRef(products)
   productsRef.current = products
+  const scanOpenRef = useRef(scanOpen)
+  scanOpenRef.current = scanOpen
+  const completedRef = useRef(completed)
+  completedRef.current = completed
 
   const productIndex = useMemo(() => buildProductIndex(products), [products])
   const productIndexRef = useRef(productIndex)
   productIndexRef.current = productIndex
 
+  // Defer name-search filtering so USB wedge digits don't thrash the catalogue UI
+  const deferredQuery = useDeferredValue(query)
   const suggestions = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    if (barcodeBurstRef.current) return []
+    const q = deferredQuery.trim().toLowerCase()
     if (!q) return []
+    // Digit-only bursts are barcodes — skip expensive name filter
+    if (/^\d{4,}$/.test(q)) return []
     return products
       .filter(
         (p) =>
@@ -118,7 +187,7 @@ export function CheckoutPage() {
           (p.sku ?? '').toLowerCase().includes(q),
       )
       .slice(0, 8)
-  }, [products, query])
+  }, [products, deferredQuery])
 
   const cartItemCount = useMemo(
     () => cart.reduce((n, line) => n + line.quantity, 0),
@@ -158,9 +227,15 @@ export function CheckoutPage() {
     return () => ro.disconnect()
   }, [products.length, loading])
 
+  useEffect(() => {
+    void api<{ configured: boolean }>('/team/manager-pin/status')
+      .then((d) => setManagerPinConfigured(d.configured))
+      .catch(() => setManagerPinConfigured(false))
+  }, [])
+
   const virtualCatalogue = useVirtualGrid(catalogue, {
     containerRef: catalogueScrollRef,
-    rowHeight: 168,
+    rowHeight: isPhone ? 220 : 236,
     columns: catalogueCols,
     overscan: 3,
   })
@@ -192,6 +267,13 @@ export function CheckoutPage() {
     () =>
       canDiscount ? loyaltyDiscountKwacha(customerPts, subtotal) : 0,
     [canDiscount, customerPts, subtotal],
+  )
+
+  const cartNeedsRx = useMemo(
+    () =>
+      Boolean(user?.modules?.pharmacy) &&
+      cart.some((l) => l.product.requires_prescription),
+    [cart, user?.modules?.pharmacy],
   )
 
   const recentProducts = useMemo(() => {
@@ -227,37 +309,35 @@ export function CheckoutPage() {
 
   useEffect(() => {
     void fetchShopProfile()
-      .then(setShop)
-      .catch(() => undefined)
+      .then((profile) => {
+        setShop({
+          ...profile,
+          // Always prefer live session business name on receipt
+          name: user?.businessName?.trim() || profile.name,
+        })
+      })
+      .catch(() => {
+        if (user?.businessName) {
+          setShop({
+            name: user.businessName,
+            currency: 'ZMW',
+          })
+        }
+      })
+  }, [user?.businessName])
+
+  const clearBarcodeTimer = useCallback(() => {
+    if (barcodeTimerRef.current) {
+      window.clearTimeout(barcodeTimerRef.current)
+      barcodeTimerRef.current = null
+    }
   }, [])
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      const typing =
-        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-      if (e.key === 'F2') {
-        e.preventDefault()
-        searchRef.current?.focus()
-        searchRef.current?.select()
-      }
-      if (e.key === 'F3') {
-        e.preventDefault()
-        unlockAudio()
-        setScanStatus({ message: 'Point at barcode', tone: 'idle' })
-        setScanOpen(true)
-      }
-      if (e.key === 'F4') {
-        e.preventDefault()
-        void completeSaleRef.current()
-      }
-      if (e.key === 'Escape' && !typing) {
-        setQuery('')
-        setError('')
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+  const focusSearch = useCallback((select = false) => {
+    const el = searchRef.current
+    if (!el) return
+    el.focus()
+    if (select) el.select()
   }, [])
 
   const clearCustomer = useCallback(() => {
@@ -330,7 +410,7 @@ export function CheckoutPage() {
       })
 
       unlockAudio()
-      playScanBeep()
+      playAddBeep()
       try {
         navigator.vibrate?.(source === 'scan' ? 28 : addQty > 1 ? 36 : 18)
       } catch {
@@ -349,46 +429,211 @@ export function CheckoutPage() {
     [push],
   )
 
+  const removeOneByScan = useCallback(
+    (productId: string, productName: string): ScanResult => {
+      const inCart = cartRef.current.find((l) => l.product.id === productId)
+      if (!inCart) {
+        const message = `${productName} isn’t in the cart`
+        setScanStatus({ message, tone: 'error' })
+        playErrorBuzz()
+        return { ok: false, label: productName, message }
+      }
+      const nextQty = inCart.quantity - 1
+      setCart((lines) =>
+        lines
+          .map((line) =>
+            line.product.id === productId
+              ? { ...line, quantity: nextQty }
+              : line,
+          )
+          .filter((line) => line.quantity > 0),
+      )
+      lastScanAddRef.current = null
+      unlockAudio()
+      playRemoveBeep()
+      try {
+        navigator.vibrate?.([30, 40, 30])
+      } catch {
+        // ignore
+      }
+      const message =
+        nextQty > 0
+          ? `−1 ${productName} · now ×${nextQty}`
+          : `Removed ${productName}`
+      setFlash(message)
+      window.setTimeout(() => setFlash(''), 1200)
+      setScanStatus({ message, tone: 'ok' })
+      return { ok: true, label: productName, message }
+    },
+    [],
+  )
+
   const handleLookup = useCallback(
-    (raw: string, source: 'scan' | 'manual' = 'manual'): ScanResult => {
+    (
+      raw: string,
+      source: 'scan' | 'manual' = 'manual',
+      intent: 'add' | 'remove' = 'add',
+    ): ScanResult => {
       const code = raw.trim()
       if (!code) return { ok: false, message: 'Empty code' }
 
       const product = findProductByCode(code, productIndexRef.current)
-      if (product) {
-        return addProduct(product.id, source)
+      if (!product) {
+        const message = `Not in catalogue: ${code}`
+        setError(message)
+        push(message, 'error')
+        playErrorBuzz()
+        if (source === 'scan') {
+          setScanStatus({
+            message: `${message} — add under Inventory first`,
+            tone: 'error',
+          })
+        }
+        return { ok: false, message }
       }
 
-      const message = `Not in catalogue: ${code}`
-      setError(message)
-      push(message, 'error')
-      playErrorBuzz()
-      if (source === 'scan') {
-        setScanStatus({
-          message: `${message} — add under Inventory first`,
-          tone: 'error',
-        })
+      if (source === 'scan' && intent === 'remove') {
+        return removeOneByScan(product.id, product.name)
       }
-      return { ok: false, message }
+
+      const result = addProduct(product.id, source)
+      if (result.ok && source === 'scan') {
+        lastScanAddRef.current = { productId: product.id, at: Date.now() }
+      }
+      if (result.ok && !isPhone) {
+        window.requestAnimationFrame(() => focusSearch())
+      }
+      return result
     },
-    [addProduct, push],
+    [addProduct, focusSearch, isPhone, push, removeOneByScan],
   )
 
-  function setQty(productId: string, quantity: number) {
-    setCart((prev) =>
-      prev
-        .map((line) => {
-          if (line.product.id !== productId) return line
-          const max = line.product.stock_quantity
-          return { ...line, quantity: Math.min(Math.max(0, quantity), max) }
-        })
-        .filter((line) => line.quantity > 0),
-    )
-  }
+  const submitBarcodeSearch = useCallback(
+    (raw: string) => {
+      clearBarcodeTimer()
+      barcodeBurstRef.current = false
+      const code = raw.trim()
+      if (!code) return
+      handleLookup(code, 'manual')
+      setQuery('')
+      window.requestAnimationFrame(() => focusSearch())
+    },
+    [clearBarcodeTimer, focusSearch, handleLookup],
+  )
 
-  function removeLine(productId: string) {
-    setCart((prev) => prev.filter((l) => l.product.id !== productId))
-  }
+  const scheduleBarcodeAutoSubmit = useCallback(
+    (next: string) => {
+      clearBarcodeTimer()
+      const trimmed = next.trim()
+      if (!trimmed) return
+      const digitBarcode = /^\d{6,18}$/.test(trimmed)
+      const burstReady = barcodeBurstRef.current && trimmed.length >= 6
+      if (!digitBarcode && !burstReady) return
+      // Complete retail lengths settle fast; partial codes wait a bit longer.
+      // Laptop/tablet-as-desktop: snappier USB wedge; phone keep prior timing.
+      const completeLen =
+        /^\d{8}$/.test(trimmed) ||
+        /^\d{12}$/.test(trimmed) ||
+        /^\d{13}$/.test(trimmed) ||
+        /^\d{14}$/.test(trimmed)
+      const settleMs = isPhone
+        ? completeLen
+          ? 28
+          : digitBarcode && trimmed.length >= 10
+            ? 45
+            : burstReady
+              ? 55
+              : 90
+        : completeLen
+          ? 16
+          : digitBarcode && trimmed.length >= 10
+            ? 32
+            : burstReady
+              ? 40
+              : 70
+      barcodeTimerRef.current = window.setTimeout(() => {
+        barcodeTimerRef.current = null
+        // Live DOM — React state can lag a fast HID wedge
+        const live = searchRef.current?.value?.trim() || trimmed
+        if (!live) return
+        if (
+          /^\d{6,18}$/.test(live) ||
+          (barcodeBurstRef.current && live.length >= 6)
+        ) {
+          submitBarcodeSearch(live)
+        }
+      }, settleMs)
+    },
+    [clearBarcodeTimer, isPhone, submitBarcodeSearch],
+  )
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      const typing =
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        Boolean(target?.isContentEditable)
+      if (e.key === 'F2') {
+        e.preventDefault()
+        focusSearch(true)
+      }
+      if (e.key === 'F3') {
+        e.preventDefault()
+        unlockAudio()
+        setScanStatus({ message: '', tone: 'idle' })
+        setScanOpen(true)
+      }
+      if (e.key === 'F4') {
+        e.preventDefault()
+        void completeSaleRef.current()
+      }
+      if (e.key === 'Escape' && !typing) {
+        setQuery('')
+        setError('')
+      }
+
+      // USB keyboard-wedge: when focus is elsewhere on Sell, still capture the burst
+      if (
+        typing ||
+        scanOpenRef.current ||
+        completedRef.current ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey
+      ) {
+        return
+      }
+      if (e.key === 'Enter') {
+        const live = searchRef.current?.value ?? ''
+        if (live.trim()) {
+          e.preventDefault()
+          submitBarcodeSearch(live)
+        }
+        return
+      }
+      if (e.key.length === 1) {
+        e.preventDefault()
+        const now = Date.now()
+        if (now - lastBarcodeKeyAtRef.current < WEDGE_BURST_MS) {
+          barcodeBurstRef.current = true
+        }
+        lastBarcodeKeyAtRef.current = now
+        const el = searchRef.current
+        const base = el?.value ?? ''
+        const next = `${base}${e.key}`
+        // Keep input DOM ahead of React so Enter / settle read the full code
+        if (el) el.value = next
+        setQuery(next)
+        if (document.activeElement !== el) focusSearch()
+        scheduleBarcodeAutoSubmit(next)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusSearch, scheduleBarcodeAutoSubmit, submitBarcodeSearch])
 
   async function lookupCustomer(raw?: string) {
     const phone = (raw ?? customerPhone).trim()
@@ -396,6 +641,8 @@ export function CheckoutPage() {
       setCustomerId(null)
       setCustomerLabel('')
       setCustomerPts(0)
+      setCustomerBalance(0)
+      setCustomerCreditLimit(0)
       return
     }
     if (phone.length < 3) return
@@ -408,20 +655,30 @@ export function CheckoutPage() {
           phone: string | null
           loyaltyPts: number
           balance: number
+          creditLimit: number
         }>
       }>(`/customers?q=${encodeURIComponent(phone)}`)
       const hit = data.customers[0]
       if (!hit) {
         setCustomerId(null)
         setCustomerPts(0)
+        setCustomerBalance(0)
+        setCustomerCreditLimit(0)
         setCustomerLabel('No customer match')
         return
       }
       setCustomerId(hit.id)
       setCustomerPts(hit.loyaltyPts || 0)
+      setCustomerBalance(hit.balance || 0)
+      setCustomerCreditLimit(hit.creditLimit || 0)
+      const avail = Math.max(0, (hit.creditLimit || 0) - (hit.balance || 0))
       setCustomerLabel(
         `${hit.fullName}${hit.loyaltyPts ? ` · ${hit.loyaltyPts} pts` : ''}${
           hit.balance > 0 ? ` · owes ${formatZMW(hit.balance)}` : ''
+        }${
+          hit.creditLimit > 0
+            ? ` · credit avail ${formatZMW(avail)}`
+            : ''
         }`,
       )
     } catch {
@@ -438,6 +695,8 @@ export function CheckoutPage() {
         setCustomerId(null)
         setCustomerLabel('')
         setCustomerPts(0)
+        setCustomerBalance(0)
+        setCustomerCreditLimit(0)
       }
       return
     }
@@ -454,27 +713,87 @@ export function CheckoutPage() {
       push('Add at least one item', 'error')
       return
     }
+    // Default Exact cash so receipts always show money handed + change
+    let tenderCash =
+      cashReceived !== '' && Number.isFinite(cashValue) ? cashValue : null
+    if (paymentMethod === 'cash' && tenderCash === null && total > 0) {
+      tenderCash = Number(total.toFixed(2))
+    }
     if (
-      needsCashTender &&
-      cashReceived !== '' &&
-      Number.isFinite(cashValue) &&
-      cashValue < total &&
-      paymentMethod === 'cash'
+      paymentMethod === 'cash' &&
+      tenderCash !== null &&
+      tenderCash < total
     ) {
       const msg = 'Cash received is less than the total'
       setError(msg)
       push(msg, 'error')
       return
     }
+    if (paymentMethod === 'credit') {
+      if (!canCredit) {
+        const msg = 'You need credit_sales permission for credit sales'
+        setError(msg)
+        push(msg, 'error')
+        return
+      }
+      if (!customerId) {
+        const msg = 'Credit sale requires a matched customer (phone lookup)'
+        setError(msg)
+        push(msg, 'error')
+        return
+      }
+      if (customerCreditLimit <= 0) {
+        const msg = 'Customer has no credit limit — set one under Customers'
+        setError(msg)
+        push(msg, 'error')
+        return
+      }
+      if (customerBalance + total > customerCreditLimit + 0.001) {
+        const msg = `Credit limit exceeded (owed ${formatZMW(customerBalance)} + ${formatZMW(total)} > ${formatZMW(customerCreditLimit)})`
+        setError(msg)
+        push(msg, 'error')
+        return
+      }
+    }
+    const tenderChange =
+      tenderCash !== null ? Number((tenderCash - total).toFixed(2)) : null
+
+    const largeDiscount =
+      safeDiscount > 0 &&
+      ((subtotal > 0 && safeDiscount / subtotal >= 0.2) || safeDiscount >= 50)
+    const reasonTrim = discountReason.trim()
+    if (largeDiscount && reasonTrim.length < 3) {
+      const msg = 'Large discount needs a short reason (logged for Trust)'
+      setError(msg)
+      push(msg, 'error')
+      return
+    }
+    if (
+      largeDiscount &&
+      managerPinConfigured &&
+      !/^\d{4,6}$/.test(managerPin.trim())
+    ) {
+      const msg = 'Large discount needs manager PIN (4–6 digits)'
+      setError(msg)
+      push(msg, 'error')
+      return
+    }
+    if (cartNeedsRx && prescriptionNote.trim().length < 3) {
+      const msg = 'Rx items need a short prescription / dispense note'
+      setError(msg)
+      push(msg, 'error')
+      return
+    }
+
     setBusy(true)
     setError('')
     try {
       const noteParts: string[] = []
-      if (cashReceived !== '' && Number.isFinite(cashValue)) {
-        noteParts.push(`Cash given: ${cashValue.toFixed(2)}`)
+      if (tenderCash !== null) {
+        noteParts.push(`Cash given: ${tenderCash.toFixed(2)}`)
       }
-      if (change !== null) {
-        noteParts.push(`Change: ${change.toFixed(2)}`)
+      if (tenderChange !== null) {
+        noteParts.push(`Change: ${tenderChange.toFixed(2)}`)
       }
       if (momoAgent?.number) {
         noteParts.push(`${momoAgent.network} agent: ${momoAgent.number}`)
@@ -499,10 +818,21 @@ export function CheckoutPage() {
         await enqueueSale({
           clientSaleId,
           discount: safeDiscount,
+          discountReason: reasonTrim || undefined,
           paymentMethod: paymentApi,
-          notes,
+          notes: reasonTrim
+            ? [notes, `Discount reason: ${reasonTrim}`].filter(Boolean).join(' · ')
+            : notes,
           customerId: customerId || undefined,
+          loyaltyPtsRedeemed:
+            reasonTrim.toLowerCase().includes('loyalty') && safeDiscount > 0
+              ? Math.floor(safeDiscount) * 10
+              : undefined,
+          prescriptionNote: cartNeedsRx
+            ? prescriptionNote.trim()
+            : undefined,
           lines: payloadLines,
+          branchId: getActiveBranchId(),
         })
         const offlineMapped = {
           id: clientSaleId,
@@ -522,11 +852,10 @@ export function CheckoutPage() {
           })),
         }
         playSuccessChime()
+        speakSaleThanks()
         push(`Saved offline · sync when online`, 'ok')
-        setCompletedCash(
-          cashReceived !== '' && Number.isFinite(cashValue) ? cashValue : null,
-        )
-        setCompletedChange(change !== null ? change : null)
+        setCompletedCash(tenderCash)
+        setCompletedChange(tenderChange)
         setCompleted(offlineMapped)
         setLastCart(cart.map((line) => ({ ...line })))
         applyStockDeltas(
@@ -535,8 +864,9 @@ export function CheckoutPage() {
             delta: -line.quantity,
           })),
         )
-        setCart([])
+        emptyCart()
         setDiscount(0)
+        setDiscountReason('')
         setCashReceived('')
         setPaymentMethod('cash')
         clearCustomer()
@@ -574,15 +904,29 @@ export function CheckoutPage() {
         body: JSON.stringify({
           clientSaleId,
           customerId: customerId || undefined,
+          loyaltyPtsRedeemed:
+            reasonTrim.toLowerCase().includes('loyalty') && safeDiscount > 0
+              ? Math.floor(safeDiscount) * 10
+              : undefined,
           lines: payloadLines.map((l) => ({
             productId: l.productId,
             quantity: l.quantity,
           })),
           discount: safeDiscount,
+          discountReason: reasonTrim || undefined,
+          prescriptionNote: cartNeedsRx
+            ? prescriptionNote.trim()
+            : undefined,
+          managerPin:
+            largeDiscount && managerPinConfigured
+              ? managerPin.trim()
+              : undefined,
           paymentMethod: paymentApi,
           notes,
         }),
       })
+      setManagerPin('')
+      setPrescriptionNote('')
       const sale = data.sale
       const mapped = {
         id: sale.id,
@@ -602,11 +946,10 @@ export function CheckoutPage() {
         })),
       }
       playSuccessChime()
+      speakSaleThanks()
       push(`Sale complete · ${formatZMW(mapped.total)}`, 'ok')
-      setCompletedCash(
-        cashReceived !== '' && Number.isFinite(cashValue) ? cashValue : null,
-      )
-      setCompletedChange(change !== null ? change : null)
+      setCompletedCash(tenderCash)
+      setCompletedChange(tenderChange)
       setCompleted(mapped)
       setLastCart(cart.map((line) => ({ ...line })))
       applyStockDeltas(
@@ -615,8 +958,9 @@ export function CheckoutPage() {
           delta: -line.quantity,
         })),
       )
-      setCart([])
+      emptyCart()
       setDiscount(0)
+      setDiscountReason('')
       setCashReceived('')
       setPaymentMethod('cash')
       clearCustomer()
@@ -633,15 +977,21 @@ export function CheckoutPage() {
           await enqueueSale({
             clientSaleId,
             discount: safeDiscount,
+            discountReason: reasonTrim || undefined,
             paymentMethod: PAYMENT_API[paymentMethod],
             notes: 'Queued after network error',
             customerId: customerId || undefined,
+            loyaltyPtsRedeemed:
+              reasonTrim.toLowerCase().includes('loyalty') && safeDiscount > 0
+                ? Math.floor(safeDiscount) * 10
+                : undefined,
             lines: cart.map((line) => ({
               productId: line.product.id,
               quantity: line.quantity,
               productName: line.product.name,
               unitPrice: line.product.selling_price,
             })),
+            branchId: getActiveBranchId(),
           })
           push('Network dropped — sale queued offline', 'info')
           applyStockDeltas(
@@ -651,8 +1001,9 @@ export function CheckoutPage() {
             })),
           )
           setLastCart(cart.map((line) => ({ ...line })))
-          setCart([])
+          emptyCart()
           setDiscount(0)
+          setDiscountReason('')
           setCashReceived('')
           clearCustomer()
           setBusy(false)
@@ -673,106 +1024,50 @@ export function CheckoutPage() {
   function clearCart() {
     if (!cart.length) return
     if (!window.confirm('Clear the whole cart?')) return
-    setCart([])
+    emptyCart()
     setDiscount(0)
+    setDiscountReason('')
     setCashReceived('')
     setError('')
     push('Cart cleared', 'info')
   }
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-4 pb-24 sm:gap-6 lg:grid-cols-[1.15fr_0.85fr] lg:pb-0">
-      <section className="space-y-4">
-        <div className="relative overflow-hidden rounded-[24px] border border-line bg-[#0b1224] p-5 text-white sm:p-6">
-          <div className="pointer-events-none absolute inset-0">
-            <div className="absolute -right-6 top-0 h-32 w-32 rounded-full bg-royal/40 blur-3xl interior-orb" />
-            <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-teal/30 blur-3xl interior-orb-delay" />
-          </div>
-          <div className="relative z-10">
-            <p className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-teal">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              Sell · live floor
-            </p>
-            <h2 className="font-display mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
-              Sell
-            </h2>
-            <p className="mt-2 max-w-xl text-sm text-slate-300">
-              {isPhone
-                ? 'You’re signed in on this phone — tap products or open Camera. Sales save to the shop instantly.'
-                : 'Click the catalogue, open Webcam, or link a phone gun. Sales sync for the whole shop.'}
-              {!isPhone ? (
-                <>
-                  {' '}
-                  Shortcuts:{' '}
-                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
-                    F2
-                  </kbd>{' '}
-                  search ·{' '}
-                  <kbd className="rounded bg-white/10 px-1.5 py-0.5 text-xs">
-                    F4
-                  </kbd>{' '}
-                  complete
-                </>
-              ) : null}
-            </p>
-          </div>
-        </div>
+    <div
+      className={`mx-auto grid max-w-6xl gap-4 overflow-x-hidden sm:gap-5 lg:grid-cols-[1.15fr_0.85fr] lg:gap-6 lg:pb-0 ${
+        cart.length > 0
+          ? 'pb-[calc(11.75rem+env(safe-area-inset-bottom))]'
+          : 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]'
+      }`}
+    >
+      <section className="order-1 space-y-3.5 sm:space-y-4">
+        <PageHero
+          eyebrow="Sell · live floor"
+          title="Sell"
+          subtitle="Scan, search, or tap the catalogue. Complete stays sticky on phones."
+        />
 
-        {!online || pendingCount > 0 ? (
-          <div
-            className={`rounded-2xl border px-4 py-3 text-sm ${
-              online
-                ? 'border-amber-500/30 bg-amber-500/10 text-ink'
-                : 'border-red-500/30 bg-red-500/10 text-ink'
-            }`}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="font-semibold">
-                {online
-                  ? `${pendingCount} sale${pendingCount === 1 ? '' : 's'} waiting to sync`
-                  : 'Offline — sales will queue on this device'}
-              </p>
-              {online && pendingCount > 0 ? (
-                <button
-                  type="button"
-                  className="rounded-lg bg-card px-3 py-1.5 text-xs font-semibold"
-                  disabled={syncing}
-                  onClick={() => void syncAll()}
-                >
-                  {syncing ? 'Syncing…' : 'Sync now'}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
+        <ShiftDrawerPanel compact />
 
-        {showPathTip ? (
-          <div className="rounded-2xl border border-teal/30 bg-teal/10 px-4 py-3 text-sm text-ink">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-ink">Best path for Sell</p>
-                <p className="mt-1 text-xs text-ink-soft">
-                  {isPhone
-                    ? 'Stay logged in on this phone → Live scan or tap catalogue → Complete. No QR pairing needed.'
-                    : 'Sign in on a shop phone and open Sell (recommended). QR “phone as gun” is optional for counter-only setups. HTTPS setup: see PHONE-SETUP.md.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-ink-soft hover:bg-card hover:text-ink"
-                onClick={() => {
-                  setShowPathTip(false)
-                  try {
-                    localStorage.setItem('nexora-sell-path-tip', '1')
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                Got it
-              </button>
-            </div>
-          </div>
+        <OfflineQueuePanel
+          online={online}
+          queue={queue}
+          syncing={syncing}
+          pendingCount={pendingCount}
+          conflictCount={conflictCount}
+          lastSyncAt={lastSyncAt}
+          lastSyncError={lastSyncError}
+          onSync={() => void syncAll()}
+          onRetryConflict={(id) => void retryWithConflictAccept(id)}
+          onDrop={(id) => void dropSale(id)}
+        />
+
+        {!isPhone ? (
+          <PhoneShopLink
+            path="/login"
+            title="Phone Sell link"
+            hint="Same Wi‑Fi · sign in · Sell"
+          />
         ) : null}
 
         <div className="nx-card space-y-2 p-4">
@@ -794,20 +1089,21 @@ export function CheckoutPage() {
                 placeholder="097… or name"
                 inputMode="tel"
                 autoComplete="tel"
-                className="w-full rounded-xl border border-line bg-card px-3 py-2.5 outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
+                className="nx-field"
               />
             </label>
-            <p className="pb-2 text-xs text-ink-soft sm:max-w-[14rem]">
-              {customerBusy
-                ? 'Looking up…'
-                : customerLabel || 'Optional — links history when found'}
-            </p>
+            {customerBusy || customerLabel ? (
+              <p className="pb-2 text-xs text-ink-soft sm:max-w-[14rem]">
+                {customerBusy ? 'Looking up…' : customerLabel}
+              </p>
+            ) : null}
           </div>
           {customerId && loyaltyOffer > 0 && discount < loyaltyOffer ? (
             <button
               type="button"
               onClick={() => {
                 setDiscount(loyaltyOffer)
+                setDiscountReason((r) => (r.trim() ? r : 'Loyalty redeem'))
                 push(`Loyalty applied · ${formatZMW(loyaltyOffer)} off`, 'ok')
               }}
               className="w-full rounded-xl border border-teal/30 bg-teal/10 px-3 py-2 text-left text-sm font-semibold text-ink transition hover:bg-teal/15"
@@ -820,17 +1116,29 @@ export function CheckoutPage() {
           ) : null}
         </div>
 
-        {flash ? (
-          <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/15 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-            {flash}
-          </div>
-        ) : null}
+        {flash ? <FormBanner tone="ok">{flash}</FormBanner> : null}
 
         <div className="nx-card border-royal/25 bg-gradient-to-br from-royal/10 via-card to-teal/10 p-4 sm:p-5">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
-              Add products
-            </p>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-royal">
+                Add products
+              </p>
+              {isPhone ? (
+                <p className="mt-0.5 text-[11px] text-ink-soft">
+                  Live scan or type a barcode / name. Other screens are under More.
+                </p>
+              ) : null}
+            </div>
+            {isPhone ? (
+              <Link
+                to="/app/guide"
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-teal/30 bg-teal/10 px-2.5 text-xs font-bold text-teal"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                How to use
+              </Link>
+            ) : null}
             {phoneOpen && phoneStatus === 'connected' ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -839,16 +1147,7 @@ export function CheckoutPage() {
             ) : null}
           </div>
 
-          {isPhone ? (
-            <div className="mb-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-900 dark:text-emerald-200">
-              <p className="font-semibold">Phone checkout mode</p>
-              <p className="mt-1 text-xs opacity-90">
-                No QR pairing needed — you’re logged in. Tap catalogue tiles or
-                Camera. Complete the sale here; the shop ledger updates for
-                everyone.
-              </p>
-            </div>
-          ) : (
+          {isPhone ? null : (
             <>
               <button
                 type="button"
@@ -857,7 +1156,7 @@ export function CheckoutPage() {
                   setPhoneOpen(true)
                   setPhoneStatus('waiting')
                 }}
-                className={`mb-3 flex w-full items-center gap-3 rounded-2xl border px-4 py-3.5 text-left transition ${
+                className={`mb-3 flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
                   phoneOpen && phoneStatus === 'connected'
                     ? 'border-emerald-500/40 bg-emerald-500/10'
                     : 'border-royal/30 bg-royal/10 hover:bg-royal/15'
@@ -875,13 +1174,13 @@ export function CheckoutPage() {
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-ink">
                     {phoneOpen && phoneStatus === 'connected'
-                      ? 'Phone gun linked'
-                      : 'Phone as barcode gun (no login)'}
+                      ? 'Phone linked'
+                      : 'Link phone'}
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-soft">
                     {phoneOpen && phoneStatus === 'connected'
-                      ? 'Keep scanning — items land in this laptop cart'
-                      : 'Optional · QR link · or just sign in on the phone and open Sell'}
+                      ? 'Scans add to this cart'
+                      : 'QR on phone · live on this cart'}
                   </span>
                 </span>
               </button>
@@ -889,7 +1188,9 @@ export function CheckoutPage() {
               {phoneOpen ? (
                 <div className="mb-3 rounded-2xl border border-line bg-card p-4">
                   <PhonePairPanel
-                    onScan={(code) => handleLookup(code, 'scan')}
+                    onScan={(code, intent = 'add') =>
+                      handleLookup(code, 'scan', intent)
+                    }
                     onClose={() => {
                       setPhoneOpen(false)
                       setPhoneStatus('waiting')
@@ -903,54 +1204,77 @@ export function CheckoutPage() {
 
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-ink-soft" />
+              <Search
+                className="pointer-events-none absolute left-3.5 top-1/2 z-[1] h-5 w-5 -translate-y-1/2 text-ink-soft sm:left-4"
+                aria-hidden
+              />
               <input
                 ref={searchRef}
                 value={query}
                 onChange={(e) => {
                   const next = e.target.value
+                  const now = Date.now()
+                  if (now - lastBarcodeKeyAtRef.current < WEDGE_BURST_MS) {
+                    barcodeBurstRef.current = true
+                  }
+                  lastBarcodeKeyAtRef.current = now
                   setQuery(next)
-                  if (barcodeTimerRef.current) {
-                    window.clearTimeout(barcodeTimerRef.current)
-                  }
-                  if (/^\d{8,14}$/.test(next.trim())) {
-                    barcodeTimerRef.current = window.setTimeout(() => {
-                      handleLookup(next, 'manual')
-                      setQuery('')
-                    }, 60)
-                  }
+                  scheduleBarcodeAutoSubmit(next)
+                }}
+                onPaste={(e) => {
+                  // Laptop scanners / clipboard paste — submit as soon as digits land
+                  if (isPhone) return
+                  const text = e.clipboardData?.getData('text')?.trim() ?? ''
+                  if (!/^\d{6,18}$/.test(text) && text.length < 6) return
+                  e.preventDefault()
+                  clearBarcodeTimer()
+                  if (searchRef.current) searchRef.current.value = text
+                  setQuery(text)
+                  barcodeBurstRef.current = true
+                  submitBarcodeSearch(text)
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
-                    handleLookup(query, 'manual')
-                    setQuery('')
+                    clearBarcodeTimer()
+                    // Live DOM value — React state can lag behind a fast gun
+                    const raw = searchRef.current?.value ?? query
+                    submitBarcodeSearch(raw)
                   }
                 }}
                 placeholder={
                   isPhone
-                    ? 'Type barcode or name…'
-                    : 'USB gun or type barcode / name…'
+                    ? 'Barcode or name'
+                    : 'Scan barcode or type name · Enter'
                 }
-                className="w-full rounded-2xl border border-line bg-card py-4 pl-12 pr-4 text-lg text-ink outline-none transition focus:border-royal focus:ring-4 focus:ring-royal/20"
+                aria-label="Search barcode or product name"
+                className="nx-field nx-field-icon-lg rounded-2xl py-3.5 pr-4 text-base sm:py-4 sm:text-lg"
                 autoFocus={!isPhone}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                inputMode={isPhone ? undefined : 'search'}
               />
             </div>
             <Button
               type="button"
-              className={`rounded-2xl px-5 py-4 ${isPhone ? 'min-h-14 flex-1 bg-[#3563E9] text-base hover:bg-[#2f58d4] sm:flex-none' : ''}`}
+              className={`rounded-2xl px-5 py-4 ${isPhone ? 'min-h-14 flex-1 text-base sm:flex-none' : ''}`}
               variant={isPhone ? 'primary' : 'secondary'}
               onClick={() => {
                 unlockAudio()
+                const secure = window.isSecureContext
                 setScanStatus({
-                  message: 'Point at barcode',
-                  tone: 'idle',
+                  message: secure
+                    ? ''
+                    : 'Live camera needs HTTPS — open the public shop link on this phone.',
+                  tone: secure ? 'idle' : 'error',
                 })
                 setScanOpen(true)
               }}
             >
               <ScanLine className="h-5 w-5" />
-              {isPhone ? 'Live scan' : 'Webcam'}
+              {isPhone ? 'Live scan' : 'Scan'}
             </Button>
           </div>
           {scanStatus.tone !== 'idle' ? (
@@ -990,19 +1314,24 @@ export function CheckoutPage() {
           </div>
         ) : null}
 
-        {error ? (
-          <p className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-danger">
-            {error}
-          </p>
+        {error ? <FormBanner tone="error">{error}</FormBanner> : null}
+        {productsError ? (
+          <FormBanner tone="error">
+            Could not load products: {productsError}.{' '}
+            <button
+              type="button"
+              className="font-semibold underline"
+              onClick={() => void refresh()}
+            >
+              Retry
+            </button>
+          </FormBanner>
         ) : null}
 
-        <div className="nx-card p-4">
+        <div className="nx-card p-3.5 sm:p-4">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
             <div>
-              <h3 className="font-semibold text-ink">Shop catalogue</h3>
-              <p className="mt-0.5 text-xs text-ink-soft">
-                Tap to add · hold tile for +5 · F2 search · F3 scan · F4 complete
-              </p>
+              <h3 className="font-semibold text-ink">Catalogue</h3>
             </div>
             {loading ? (
               <span className="text-xs text-ink-soft">Loading…</span>
@@ -1015,18 +1344,22 @@ export function CheckoutPage() {
 
           <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_180px]">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-soft" />
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 z-[1] h-4 w-4 -translate-y-1/2 text-ink-soft"
+                aria-hidden
+              />
               <input
                 value={catalogueQuery}
                 onChange={(e) => setCatalogueQuery(e.target.value)}
-                placeholder="Filter catalogue…"
-                className="w-full rounded-xl border border-line bg-surface py-2.5 pl-10 pr-3 text-sm outline-none focus:border-royal focus:ring-4 focus:ring-royal/15"
+                placeholder={isPhone ? 'Filter…' : 'Filter catalogue…'}
+                aria-label="Filter catalogue"
+                className="nx-field nx-field-icon bg-surface py-2.5 pr-3"
               />
             </div>
             <select
               value={catalogueCategory}
               onChange={(e) => setCatalogueCategory(e.target.value)}
-              className="rounded-xl border border-line bg-surface px-3 py-2.5 text-sm outline-none focus:border-royal"
+              className="nx-field bg-surface"
             >
               <option value="All">All categories</option>
               {PRODUCT_CATEGORIES.map((cat) => (
@@ -1072,14 +1405,23 @@ export function CheckoutPage() {
             </div>
           ) : null}
 
-          {!loading && products.length === 0 ? (
+          {!loading && productsError ? (
             <EmptyState
+              compact
+              icon={PackageOpen}
+              title="Catalogue unavailable"
+              body="Check your connection, then retry loading products."
+            />
+          ) : !loading && products.length === 0 ? (
+            <EmptyState
+              compact
               icon={PackageOpen}
               title="No products yet"
               body="Add stock in Inventory so staff can click products onto the cart."
             />
           ) : !loading && catalogue.length === 0 ? (
             <EmptyState
+              compact
               icon={PackageOpen}
               title="No matches"
               body="Try another filter or category."
@@ -1087,7 +1429,7 @@ export function CheckoutPage() {
           ) : (
             <div
               ref={catalogueScrollRef}
-              className="max-h-[min(58vh,480px)] overflow-y-auto overscroll-contain pr-1"
+              className="max-h-[min(52vh,440px)] overflow-y-auto overscroll-contain pr-0.5 sm:max-h-[min(58vh,480px)]"
             >
               <div
                 style={{ height: virtualCatalogue.totalHeight, position: 'relative' }}
@@ -1114,8 +1456,8 @@ export function CheckoutPage() {
         </div>
       </section>
 
-      <section className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-        <div className="nx-card p-4 sm:p-5">
+      <section className="order-2 space-y-4 lg:sticky lg:top-6 lg:self-start">
+        <div id="sell-cart-panel" className="nx-card scroll-mt-20 p-3.5 sm:p-5">
           <div className="flex items-center justify-between gap-2">
             <h3 className="font-display text-lg font-semibold text-ink">
               Cart
@@ -1125,7 +1467,7 @@ export function CheckoutPage() {
               <button
                 type="button"
                 onClick={clearCart}
-                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-ink-soft hover:bg-brand-soft hover:text-ink"
+                className="inline-flex min-h-9 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-ink-soft hover:bg-brand-soft hover:text-ink"
               >
                 <Eraser className="h-3.5 w-3.5" />
                 Clear
@@ -1134,15 +1476,12 @@ export function CheckoutPage() {
           </div>
 
           {cart.length === 0 ? (
-            <div className="mt-2 space-y-3">
+            <div className="mt-1 space-y-3">
               <EmptyState
+                compact
                 icon={Smartphone}
                 title="Ready for the next customer"
-                body={
-                  isPhone
-                    ? 'Tap Live scan or a catalogue tile. Sales save to the shop instantly.'
-                    : 'Tap catalogue, Webcam, USB scan, or optional phone gun.'
-                }
+                body={isPhone ? 'Tap Live scan or a catalogue tile.' : undefined}
               />
               {lastCart.length > 0 ? (
                 <Button
@@ -1150,7 +1489,7 @@ export function CheckoutPage() {
                   variant="secondary"
                   className="w-full rounded-2xl"
                   onClick={() => {
-                    setCart(lastCart.map((line) => ({ ...line })))
+                    restoreCart(lastCart)
                     push('Same as last — adjust qty if needed', 'info')
                   }}
                 >
@@ -1160,7 +1499,7 @@ export function CheckoutPage() {
               ) : null}
             </div>
           ) : (
-            <ul className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto overscroll-contain pr-1">
+            <ul className="mt-3 max-h-[36vh] space-y-2 overflow-y-auto overscroll-contain pr-0.5 sm:mt-4 sm:max-h-[40vh] sm:space-y-2.5">
               {cart.map((line) => (
                 <CartLineRow
                   key={line.product.id}
@@ -1172,39 +1511,82 @@ export function CheckoutPage() {
             </ul>
           )}
 
-          <div className="mt-5 space-y-3 border-t border-line pt-4 text-sm">
-            <div className="flex justify-between text-ink-soft">
-              <span>Subtotal</span>
-              <span>{formatZMW(subtotal)}</span>
-            </div>
-            {canDiscount ? (
-              <label className="flex items-center justify-between gap-3">
-                <span className="text-ink-soft">Discount</span>
+          <div className="mt-4 space-y-2.5 border-t border-line pt-3.5 text-sm sm:mt-5 sm:space-y-3 sm:pt-4">
+            {cartNeedsRx ? (
+              <label className="block space-y-1">
+                <span className="text-xs font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                  Rx / dispense note
+                </span>
                 <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={discount}
-                  onChange={(e) => setDiscount(Number(e.target.value))}
-                  className="w-28 rounded-xl border border-line px-3 py-2 text-right outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
+                  value={prescriptionNote}
+                  onChange={(e) => setPrescriptionNote(e.target.value)}
+                  placeholder="Script #, doctor, or counsel note"
+                  className="nx-field w-full py-2"
                 />
               </label>
             ) : null}
+            <div className="flex justify-between text-ink-soft">
+              <span>Subtotal</span>
+              <span className="tabular-nums">{formatZMW(subtotal)}</span>
+            </div>
+            {canDiscount ? (
+              <div className="space-y-2">
+                <label className="flex items-center justify-between gap-3">
+                  <span className="text-ink-soft">Discount</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={discount}
+                    onChange={(e) => setDiscount(Number(e.target.value))}
+                    className="nx-field w-28 py-2 text-right"
+                  />
+                </label>
+                {safeDiscount > 0 &&
+                ((subtotal > 0 && safeDiscount / subtotal >= 0.2) ||
+                  safeDiscount >= 50) ? (
+                  <>
+                    <input
+                      type="text"
+                      value={discountReason}
+                      onChange={(e) => setDiscountReason(e.target.value)}
+                      placeholder="Reason (Trust / Audit)"
+                      className="nx-field w-full py-2 text-sm"
+                      maxLength={200}
+                    />
+                    {managerPinConfigured ? (
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={managerPin}
+                        onChange={(e) => setManagerPin(e.target.value)}
+                        placeholder="Manager PIN"
+                        className="nx-field w-full py-2 text-sm"
+                        maxLength={6}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             <div className="flex justify-between text-lg font-bold text-ink">
               <span>Total</span>
-              <span>{formatZMW(total)}</span>
+              <span className="tabular-nums">{formatZMW(total)}</span>
             </div>
           </div>
 
           <div className="mt-4">
             <p className="mb-2 text-sm font-medium text-ink">Payment</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {PAYMENT_METHODS.map((method) => (
+              {PAYMENT_METHODS.filter(
+                (m) => m.value !== 'credit' || canCredit,
+              ).map((method) => (
                 <button
                   key={method.value}
                   type="button"
                   onClick={() => setPaymentMethod(method.value)}
-                  className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
+                  className={`min-h-12 rounded-xl border px-3 py-3 text-sm font-semibold transition ${
                     paymentMethod === method.value
                       ? 'border-brand bg-brand-soft text-brand'
                       : 'border-line text-ink-soft hover:bg-brand-soft/50'
@@ -1214,6 +1596,15 @@ export function CheckoutPage() {
                 </button>
               ))}
             </div>
+            {paymentMethod === 'credit' ? (
+              <p className="mt-2 text-xs text-ink-soft">
+                Credit requires a customer with available limit. Audited with
+                cashier + customer.
+                {customerId
+                  ? ` Available ${formatZMW(Math.max(0, customerCreditLimit - customerBalance))}.`
+                  : ' Look up customer by phone first.'}
+              </p>
+            ) : null}
           </div>
 
           {momoAgent ? (
@@ -1261,7 +1652,7 @@ export function CheckoutPage() {
                   value={cashReceived}
                   onChange={(e) => setCashReceived(e.target.value)}
                   placeholder="0.00"
-                  className="w-28 rounded-xl border border-line bg-card px-3 py-2 text-right outline-none focus:border-brand focus:ring-4 focus:ring-brand/15"
+                  className="nx-field w-28 py-2 text-right"
                 />
               </label>
               {tenderSuggestions.length > 0 ? (
@@ -1319,25 +1710,32 @@ export function CheckoutPage() {
         </div>
       </section>
 
-      {/* Sticky Complete — above bottom nav on phones */}
+      {/* Sticky Complete — above bottom nav; extra padding on page so nothing is clipped */}
       {cart.length > 0 ? (
-        <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 border-t border-line bg-card/95 px-3 py-2.5 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl lg:hidden">
+        <div className="nx-chrome-blur fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 border-t border-line/70 bg-card/95 px-3 py-2.5 shadow-[0_-10px_36px_rgba(15,23,42,0.12)] backdrop-blur-xl lg:hidden">
           <div className="mx-auto flex max-w-lg items-center gap-3">
-            <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              className="min-h-12 min-w-0 flex-1 rounded-xl px-1 text-left"
+              onClick={() => {
+                document
+                  .getElementById('sell-cart-panel')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }}
+            >
               <p className="truncate text-xs text-ink-soft">
                 {cartItemCount} item{cartItemCount === 1 ? '' : 's'}
                 {' · '}
                 {PAYMENT_METHODS.find((m) => m.value === paymentMethod)?.label ||
                   paymentMethod}
-                {safeDiscount > 0 ? ` · −${formatZMW(safeDiscount)}` : ''}
               </p>
-              <p className="font-display text-lg font-bold tabular-nums text-ink">
+              <p className="font-display text-xl font-bold tabular-nums text-ink">
                 {formatZMW(total)}
               </p>
-            </div>
+            </button>
             <Button
               type="button"
-              className="shrink-0 rounded-2xl px-5 py-3.5 text-base"
+              className="min-h-12 shrink-0 rounded-2xl px-5 text-sm font-bold sm:min-h-14 sm:px-6 sm:text-base"
               disabled={busy}
               onClick={() => void completeSale()}
             >
@@ -1350,24 +1748,67 @@ export function CheckoutPage() {
       {scanOpen && !completed ? (
         <Modal
           title="Live scan"
+          wide
+          fullScreen={isPhone}
           onClose={() => {
             keepScanOpenRef.current = false
             setScanOpen(false)
           }}
-          wide
+          headerAction={
+            <button
+              type="button"
+              className="min-h-10 rounded-xl bg-brand px-4 text-sm font-bold text-white hover:bg-brand-deep"
+              onClick={() => {
+                keepScanOpenRef.current = false
+                setScanOpen(false)
+              }}
+            >
+              Done
+            </button>
+          }
+          footer={
+            <Button
+              type="button"
+              className="min-h-12 w-full rounded-2xl text-base font-bold shadow-md"
+              onClick={() => {
+                keepScanOpenRef.current = false
+                setScanOpen(false)
+              }}
+            >
+              Done
+              {cartItemCount
+                ? ` · ${cartItemCount} · ${formatZMW(total)}`
+                : ''}
+            </Button>
+          }
         >
-          <BarcodeScanner
-            continuous
-            statusMessage={scanStatus.message}
-            statusTone={scanStatus.tone}
-            onScan={(code) => {
-              handleLookup(code, 'scan')
-            }}
-            onClose={() => {
-              keepScanOpenRef.current = false
-              setScanOpen(false)
-            }}
-          />
+          <Suspense
+            fallback={
+              <div className="flex min-h-[16rem] items-center justify-center text-sm text-ink-soft">
+                Opening camera…
+              </div>
+            }
+          >
+            <BarcodeScanner
+              continuous
+              statusMessage={
+                scanStatus.tone === 'idle' ? undefined : scanStatus.message
+              }
+              statusTone={scanStatus.tone}
+              cartHint={
+                cartItemCount
+                  ? `${cartItemCount} · ${formatZMW(total)}`
+                  : undefined
+              }
+              onScan={(code, intent = 'add') => {
+                handleLookup(code, 'scan', intent)
+              }}
+              onClose={() => {
+                keepScanOpenRef.current = false
+                setScanOpen(false)
+              }}
+            />
+          </Suspense>
         </Modal>
       ) : null}
 
@@ -1386,6 +1827,7 @@ export function CheckoutPage() {
             shop={shop ?? undefined}
             cashGiven={completedCash ?? undefined}
             changeDue={completedChange ?? undefined}
+            cashierName={user?.fullName ?? null}
             onDone={() => {
               setCompleted(null)
               setCompletedChange(null)

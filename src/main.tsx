@@ -23,6 +23,13 @@ createRoot(document.getElementById('root')!).render(
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    // Dev + tunnels: never keep a SW — cache-first was blanking Settings/themes after HMR.
+    if (import.meta.env.DEV) {
+      void navigator.serviceWorker.getRegistrations().then((regs) =>
+        Promise.all(regs.map((r) => r.unregister())),
+      )
+      return
+    }
     void navigator.serviceWorker.register('/sw.js').catch(() => undefined)
   })
 }

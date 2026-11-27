@@ -8,13 +8,17 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  getToken,
+  clearClientToken,
   loginRequest,
+  logoutRequest,
   meRequest,
   setToken,
   type SessionUser,
 } from '@/lib/api'
+import { clearActiveBranchId } from '@/lib/branch'
+import { bootstrapActiveBranch } from '@/lib/bootstrapBranch'
 import { hasPermission, type Permission } from '@/lib/permissions'
+import { prefetchFloorRoutes } from '@/lib/prefetchRoute'
 
 type AuthContextValue = {
   user: SessionUser | null
@@ -34,16 +38,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
-    if (!getToken()) {
-      setUser(null)
-      setLoading(false)
-      return
-    }
     try {
+      // Cookie session (or legacy Bearer) — always probe /me
       const { user: next } = await meRequest()
       setUser(next)
+      if (next.kind === 'business' && next.businessId) {
+        await bootstrapActiveBranch().catch(() => undefined)
+      }
     } catch {
-      setToken(null)
+      clearClientToken()
       setUser(null)
     } finally {
       setLoading(false)
@@ -56,13 +59,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const { token, user: next } = await loginRequest(email, password)
-    setToken(token)
+    // Cookie is primary; keep Bearer too so phones / tunnels still work if
+    // the httpOnly cookie is blocked or CSRF Host rewriting misfires.
+    if (token) setToken(token)
     setUser(next)
+    if (next.kind === 'business') {
+      prefetchFloorRoutes()
+      if (next.businessId) {
+        await bootstrapActiveBranch().catch(() => undefined)
+      }
+    }
     return next
   }, [])
 
+  useEffect(() => {
+    if (!loading && user?.kind === 'business') prefetchFloorRoutes()
+  }, [loading, user?.kind])
+
   const logout = useCallback(() => {
-    setToken(null)
+    void logoutRequest().catch(() => undefined)
+    clearClientToken()
+    clearActiveBranchId()
     setUser(null)
   }, [])
 

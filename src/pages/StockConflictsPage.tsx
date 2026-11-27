@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
-import { EmptyState } from '@/components/EmptyState'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { EmptyState, LoadingBlock } from '@/components/EmptyState'
 import { PageHero } from '@/components/PageHero'
 import { Button } from '@/components/ui/Button'
+import { FormBanner } from '@/components/ui/FormBanner'
+import { useOfflineSync } from '@/context/OfflineSyncContext'
+import { OfflineQueuePanel } from '@/components/OfflineQueuePanel'
 import { api } from '@/lib/api'
 
 type Conflict = {
@@ -22,6 +25,7 @@ export function StockConflictsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busyId, setBusyId] = useState('')
+  const offline = useOfflineSync()
 
   async function load() {
     setError('')
@@ -61,31 +65,54 @@ export function StockConflictsPage() {
   const open = rows.filter((r) => r.status === 'OPEN')
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-4xl space-y-4 sm:space-y-5">
       <PageHero
-        eyebrow="Inventory integrity"
-        title="Stock conflicts"
-        subtitle="Offline or concurrent sales that requested more stock than was available. Resolve without silently overwriting inventory."
+        eyebrow="Stock integrity"
+        title="Conflicts & offline sync"
+        actions={
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => {
+              setLoading(true)
+              void load()
+                .catch((err) =>
+                  setError(
+                    err instanceof Error ? err.message : 'Failed to load',
+                  ),
+                )
+                .finally(() => setLoading(false))
+            }}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+        }
       />
 
-      {error ? (
-        <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-danger">
-          {error}
-        </p>
-      ) : null}
+      <OfflineQueuePanel
+        online={offline.online}
+        queue={offline.queue}
+        syncing={offline.syncing}
+        pendingCount={offline.pendingCount}
+        conflictCount={offline.conflictCount}
+        lastSyncAt={offline.lastSyncAt}
+        lastSyncError={offline.lastSyncError}
+        onSync={() => void offline.syncAll()}
+        onRetryConflict={(id) => void offline.retryWithConflictAccept(id)}
+        onDrop={(id) => void offline.dropSale(id)}
+      />
+
+      {error ? <FormBanner tone="error">{error}</FormBanner> : null}
 
       {loading ? (
-        <div className="nx-card space-y-3 p-5">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-14 animate-pulse rounded-xl bg-brand-soft/50" />
-          ))}
+        <div className="nx-card">
+          <LoadingBlock />
         </div>
       ) : open.length === 0 ? (
-        <EmptyState
-          icon={AlertTriangle}
-          title="No open conflicts"
-          body="When offline sync hits a stock shortfall, it will appear here for managers."
-        />
+        <div className="nx-card">
+          <EmptyState icon={AlertTriangle} title="No open conflicts" />
+        </div>
       ) : (
         <ul className="nx-card divide-y divide-line overflow-hidden">
           {open.map((c) => (
@@ -98,6 +125,9 @@ export function StockConflictsPage() {
                     {c.clientSaleId
                       ? ` · offline ${c.clientSaleId.slice(0, 8)}…`
                       : ''}
+                  </p>
+                  <p className="mt-1 text-[11px] text-ink-soft">
+                    Shortfall {Math.max(0, c.requestedQty - c.availableQty)}
                   </p>
                 </div>
                 <time className="text-xs text-ink-soft">
@@ -131,6 +161,19 @@ export function StockConflictsPage() {
                 >
                   Accept shortfall
                 </Button>
+                {c.clientSaleId ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="rounded-xl text-xs"
+                    disabled={offline.syncing}
+                    onClick={() =>
+                      void offline.retryWithConflictAccept(c.clientSaleId!)
+                    }
+                  >
+                    Retry offline sale
+                  </Button>
+                ) : null}
               </div>
             </li>
           ))}
