@@ -1,61 +1,23 @@
 NEXORA public demo URL
 ======================
+Updated: 2026-11-27T10:54:00Z
 
-## Durable hosting: Railway (preferred)
+ALWAYS-ON (laptop-off) — Railway
+--------------------------------
+Durable public URL:
 
-Main includes the Railway boot fix (3d78e7a): missing JWT / MoMo secrets and
-CORS / shop origins no longer crash the process before listen. Secrets are
-auto-provisioned and persisted under /data when a volume is mounted; CORS and
-SHOP_PUBLIC_ORIGIN derive from RAILWAY_PUBLIC_DOMAIN when unset.
+  https://pos-production-b19cb8a5.up.railway.app/
 
-In-repo: Dockerfile, railway.json, railway.toml, scripts/docker-entrypoint.sh
+Health check:
 
-### Redeploy (service already linked)
+  curl -sS https://pos-production-b19cb8a5.up.railway.app/api/health
 
-  From /Users/mac/POS (with Railway CLI logged in):
-    railway up
+Deploy notes (already on main):
+  - Persistent volume mounted at /data
+  - Auto-secrets generated on boot when unset
+  - Optional overrides: JWT_SECRET, CORS_ORIGIN (and related CORS vars)
 
-  Or: push to the connected GitHub branch / Redeploy in the Railway dashboard.
-
-  Do not override the start command — image CMD runs docker-entrypoint.sh
-  (migrate + optional seed, then node).
-
-### First-time / checklist
-
-  1. railway login   (or deploy via Railway GitHub integration)
-  2. Create service from this repo (Dockerfile builder; see railway.toml)
-  3. Attach a Volume mounted at /data  (SQLite + uploads + auto-secrets)
-  4. Generate a public HTTPS domain in Railway settings
-  5. Redeploy; wait for /api/health → 200
-  6. Optional: set SEED_ON_BOOT=1 once for demo users (default in image is 1)
-
-  Explicit secrets are optional for demo boot (auto-provisioned). For a stable
-  production shop, set JWT_SECRET, MOMO_WEBHOOK_SECRET, CORS_ORIGIN, and
-  SHOP_PUBLIC_ORIGIN yourself.
-
-### After deploy
-
-  Share the Railway HTTPS URL from the service settings.
-  PDF:  <your-railway-url>/docs/NEXORA-for-business.pdf
-  Health: <your-railway-url>/api/health
-
-### Demo logins (when seeded)
-
-  owner@demo.shop / DemoOwner1!
-  admin@demo.shop / DemoAdmin1!
-  cashier@demo.shop / DemoCash1!
-  Platform: admin@nexora.app / NexoraAdmin1!
-
----
-
-## Local / temporary only (laptop must stay on)
-
-  Tunnels (trycloudflare, etc.) and LAN IPs are not laptop-off durable.
-  Prefer Railway above. Same-Wi‑Fi only: http://127.0.0.1:4000
-
----
-
-## Fly.io (optional alternative)
-
-  fly.toml + Dockerfile still work. Prefer Railway for this demo unless you
-  already run Fly. Volume + secrets story is the same idea: persist /data.
+LOCAL / LAN fallbacks
+---------------------
+  http://127.0.0.1:4000
+  http://<your-LAN-IP>:4000
