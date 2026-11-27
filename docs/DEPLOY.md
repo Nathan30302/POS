@@ -119,6 +119,11 @@ docker build -t nexora-api .
 docker run --env-file .env -p 4000:4000 nexora-api
 ```
 
+For Railway demo (SQLite): do **not** put a `VOLUME` line in the Dockerfile (Railway
+rejects it). Attach a Railway Volume at mount path `/data` in service settings so
+`DATABASE_URL=file:/data/nexora.db` and uploads persist. Image CMD is
+`scripts/docker-entrypoint.sh` (migrate/seed then listen on `0.0.0.0:$PORT`).
+
 ## Rollback
 
 1. Stop API.

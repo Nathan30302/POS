@@ -40,9 +40,14 @@ Option A — Fly.io (preferred; configs are in-repo)
      (update CORS_ORIGIN / SHOP_PUBLIC_ORIGIN if the app name differs)
 
 Option B — Railway
-  railway login && railway init && railway up
-  Set the same env vars; attach a volume at /data if using SQLite.
-  Config: railway.json + Dockerfile
+  1. railway login && railway init (or connect the GitHub/Origin repo in the dashboard)
+  2. Required: Service → Settings → Volumes → Add Volume → Mount path: /data
+     (Dockerfile must NOT declare VOLUME — Railway rejects that instruction.
+      App writes SQLite to DATABASE_URL=file:/data/nexora.db and uploads to /data/uploads.)
+  3. Variables (same as Fly secrets above; use your Railway public URL for CORS /
+     SHOP_PUBLIC_ORIGIN). Railway sets PORT automatically; SERVE_SPA=1 is in the image.
+  4. Deploy from the linked repo (Dockerfile + railway.json). Entrypoint runs
+     prisma db push + optional seed, then serves API+SPA on 0.0.0.0:$PORT.
 
 Honest constraint:
   A tunnel to localhost CANNOT survive laptop-off. Cloud hosting is mandatory.

@@ -24,8 +24,11 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
 # prisma CLI + tsx needed at runtime for migrate/seed/boot
+# SQLite + uploads live under /data (DATABASE_URL=file:/data/nexora.db).
+# Do NOT add a Docker VOLUME instruction — Railway rejects it. Persist /data by
+# attaching a Railway Volume mounted at /data in the service settings (Fly uses
+# fly.toml [[mounts]]). Without a volume, /data is ephemeral container storage.
 RUN mkdir -p /data/uploads uploads \
   && chmod +x ./scripts/docker-entrypoint.sh
 EXPOSE 4000
-VOLUME ["/data"]
 CMD ["./scripts/docker-entrypoint.sh"]

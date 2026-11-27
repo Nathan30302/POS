@@ -5,9 +5,8 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "SERVE_SPA=1 node --import tsx server/index.ts",
     "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 30,
+    "healthcheckTimeout": 60,
     "restartPolicyType": "ON_FAILURE"
   }
 }
