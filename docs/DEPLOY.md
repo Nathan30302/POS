@@ -123,6 +123,23 @@ For Railway demo (SQLite): do **not** put a `VOLUME` line in the Dockerfile (Rai
 rejects it). Attach a Railway Volume at mount path `/data` in service settings so
 `DATABASE_URL=file:/data/nexora.db` and uploads persist. Image CMD is
 `scripts/docker-entrypoint.sh` (migrate/seed then listen on `0.0.0.0:$PORT`).
+Do **not** set a custom start command in Railway that bypasses that entrypoint.
+
+### Railway Variables
+
+`DATABASE_URL` defaults to `file:/data/nexora.db` (Dockerfile `ENV`, entrypoint, and
+`server/env.ts`). You do not need to set it unless you want Postgres.
+
+**Still set manually in the Railway service:**
+
+| Variable | Example / notes |
+|----------|-----------------|
+| `JWT_SECRET` | ≥32 random chars, not a placeholder |
+| `MOMO_WEBHOOK_SECRET` | long random shared secret |
+| `CORS_ORIGIN` | your public HTTPS origin(s), comma-separated |
+| `SHOP_PUBLIC_ORIGIN` | public shop URL (QR / tunnel), no trailing slash |
+
+**Volume:** mount path `/data` (required for durable SQLite + uploads).
 
 ## Rollback
 

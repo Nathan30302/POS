@@ -1,8 +1,10 @@
 /**
  * Boot-time environment validation.
  * Local/demo: SQLite + any JWT_SECRET in .env is fine.
- * Production: refuse weak secrets and require DATABASE_URL.
+ * Production: refuse weak secrets; SQLite demo defaults DATABASE_URL to /data.
  */
+const PROD_SQLITE_DEFAULT = 'file:/data/nexora.db'
+
 export type AppEnv = {
   nodeEnv: string
   isProd: boolean
@@ -27,7 +29,7 @@ function detectProvider(url: string): AppEnv['dbProvider'] {
 export function loadAppEnv(): AppEnv {
   const nodeEnv = process.env.NODE_ENV || 'development'
   const isProd = nodeEnv === 'production'
-  const databaseUrl = process.env.DATABASE_URL || ''
+  let databaseUrl = (process.env.DATABASE_URL || '').trim()
   const jwtSecret = process.env.JWT_SECRET || ''
   const corsRaw = (process.env.CORS_ORIGIN || '').trim()
   const corsOrigins = corsRaw
@@ -37,8 +39,14 @@ export function loadAppEnv(): AppEnv {
     (process.env.SHOP_PUBLIC_ORIGIN || '').replace(/\/$/, '') || null
 
   if (isProd) {
+    // Railway/Fly demo: Dockerfile + entrypoint set this; still default if a
+    // custom start command bypasses the entrypoint or an empty var overrides ENV.
     if (!databaseUrl) {
-      throw new Error('DATABASE_URL is required in production')
+      databaseUrl = PROD_SQLITE_DEFAULT
+      process.env.DATABASE_URL = databaseUrl
+      console.warn(
+        `[nexora] DATABASE_URL missing in production — defaulting to ${PROD_SQLITE_DEFAULT} (mount a volume at /data for persistence)`,
+      )
     }
     if (!jwtSecret || jwtSecret.length < 32) {
       throw new Error(

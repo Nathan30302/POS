@@ -1,0 +1,14 @@
+# Railway deploy config (SQLite demo / always-on hosting).
+# Prefer the Dockerfile CMD (scripts/docker-entrypoint.sh) — do not set a
+# custom start command in the Railway dashboard that bypasses the entrypoint.
+# Attach a Volume mounted at /data so the DB and uploads persist.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/health"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+# No startCommand — image CMD runs docker-entrypoint.sh (migrate/seed then node).
