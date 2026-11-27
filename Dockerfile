@@ -12,6 +12,8 @@ RUN npx prisma generate && npm run build
 
 FROM node:22-alpine
 WORKDIR /app
+# Safe SQLite demo default; override with postgres://… for real multi-tenant prod.
+# Entrypoint + server/env.ts also default if Railway injects an empty DATABASE_URL.
 ENV NODE_ENV=production \
     PORT=4000 \
     SERVE_SPA=1 \
@@ -28,7 +30,8 @@ COPY --from=build /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.
 # Do NOT add a Docker VOLUME instruction — Railway rejects it. Persist /data by
 # attaching a Railway Volume mounted at /data in the service settings (Fly uses
 # fly.toml [[mounts]]). Without a volume, /data is ephemeral container storage.
-RUN mkdir -p /data/uploads uploads \
+RUN mkdir -p /data /data/uploads uploads \
   && chmod +x ./scripts/docker-entrypoint.sh
 EXPOSE 4000
+# Prefer this CMD; do not override with a bare `node …` start on Railway.
 CMD ["./scripts/docker-entrypoint.sh"]
