@@ -74,6 +74,14 @@ export function csrfOriginCheck(
   const shopHost = hostFromUrl((process.env.SHOP_PUBLIC_ORIGIN || '').trim())
   if (shopHost) allowed.add(shopHost)
 
+  // Railway public domain (same host as the deployed SPA) even if CORS_ORIGIN is stale
+  const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+  if (railwayDomain) allowed.add(railwayDomain)
+
   const forwarded = String(req.headers['x-forwarded-host'] || '')
     .split(',')[0]
     .trim()

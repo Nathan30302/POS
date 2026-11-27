@@ -164,24 +164,30 @@ export function loadAppEnv(): AppEnv {
     )
 
     const publicOrigin = railwayPublicOrigin()
-    if (!corsRaw) {
-      if (publicOrigin) {
-        corsRaw = publicOrigin
+    if (publicOrigin) {
+      const corsList = corsRaw
+        ? corsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : []
+      if (!corsList.includes(publicOrigin)) {
+        corsList.push(publicOrigin)
+        corsRaw = corsList.join(',')
         process.env.CORS_ORIGIN = corsRaw
         console.warn(
-          `[nexora] CORS_ORIGIN unset — deriving from Railway public origin: ${corsRaw}`,
-        )
-      } else {
-        console.warn(
-          '[nexora] CORS_ORIGIN unset and no Railway public domain detected — reflecting request Origin (set CORS_ORIGIN for locked production)',
+          corsList.length === 1
+            ? `[nexora] CORS_ORIGIN unset — deriving from Railway public origin: ${publicOrigin}`
+            : `[nexora] Ensured Railway public origin in CORS_ORIGIN: ${publicOrigin}`,
         )
       }
-    }
-    if (!shopPublicOrigin && publicOrigin) {
-      shopPublicOrigin = publicOrigin
-      process.env.SHOP_PUBLIC_ORIGIN = publicOrigin
+      if (!shopPublicOrigin) {
+        shopPublicOrigin = publicOrigin
+        process.env.SHOP_PUBLIC_ORIGIN = publicOrigin
+        console.warn(
+          `[nexora] SHOP_PUBLIC_ORIGIN unset — deriving from Railway: ${publicOrigin}`,
+        )
+      }
+    } else if (!corsRaw) {
       console.warn(
-        `[nexora] SHOP_PUBLIC_ORIGIN unset — deriving from Railway: ${publicOrigin}`,
+        '[nexora] CORS_ORIGIN unset and no Railway public domain detected — reflecting request Origin (set CORS_ORIGIN for locked production)',
       )
     }
 

@@ -98,4 +98,29 @@ describe('csrfOriginCheck', () => {
     )
     expect(next).toHaveBeenCalled()
   })
+
+  it('allows Railway public domain Origin when Host differs', () => {
+    const prev = process.env.RAILWAY_PUBLIC_DOMAIN
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'pos-production-b19cb8a5.up.railway.app'
+    const next = vi.fn()
+    try {
+      csrfOriginCheck(
+        {
+          method: 'POST',
+          path: '/api/products',
+          headers: {
+            host: '127.0.0.1:4000',
+            origin: 'https://pos-production-b19cb8a5.up.railway.app',
+          },
+          cookies: { [SESSION_COOKIE]: 'x' },
+        } as never,
+        mockRes() as never,
+        next,
+      )
+      expect(next).toHaveBeenCalled()
+    } finally {
+      if (prev === undefined) delete process.env.RAILWAY_PUBLIC_DOMAIN
+      else process.env.RAILWAY_PUBLIC_DOMAIN = prev
+    }
+  })
 })
