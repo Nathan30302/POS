@@ -101,9 +101,9 @@ Test a restore on a staging DB before you need it.
 
 ## 5. Security checklist before first paid shop
 
-- [ ] Strong `JWT_SECRET` (≥32, not a placeholder)
-- [ ] `CORS_ORIGIN` set to real shop origins only (required to boot in production)
-- [ ] `MOMO_WEBHOOK_SECRET` set (required to boot in production)
+- [ ] Strong `JWT_SECRET` (≥32, not a placeholder; do not leave auto-provisioned demo secrets)
+- [ ] `CORS_ORIGIN` set to real shop origins only (auto-derived on Railway if unset)
+- [ ] `MOMO_WEBHOOK_SECRET` set (auto-provisioned on Railway if unset — set explicitly for prod)
 - [ ] HTTPS (named Cloudflare tunnel or reverse proxy)
 - [ ] Demo seed skipped / demo passwords not used in prod
 - [ ] `npm run test:smoke` (or `security:smoke` + `smoke:functional`) passes against staging
@@ -130,16 +130,33 @@ Do **not** set a custom start command in Railway that bypasses that entrypoint.
 `DATABASE_URL` defaults to `file:/data/nexora.db` (Dockerfile `ENV`, entrypoint, and
 `server/env.ts`). You do not need to set it unless you want Postgres.
 
-**Still set manually in the Railway service:**
+**Auto-provision when unset (demo / first boot):** so the process listens instead of
+502ing before bind:
+
+| Variable | Behavior if missing |
+|----------|---------------------|
+| `JWT_SECRET` | Generate ≥32-byte secret; persist to `/data/.jwt_secret` when writable |
+| `MOMO_WEBHOOK_SECRET` | Same pattern → `/data/.momo_webhook_secret` |
+| `CORS_ORIGIN` | Derive `https://${RAILWAY_PUBLIC_DOMAIN}` (or Railway service URL); else reflect Origin |
+| `SHOP_PUBLIC_ORIGIN` | Same Railway public origin derivation |
+
+Secrets written under `/data` stay stable across restarts **only if** a volume is
+mounted there. Without a volume they reset on each deploy/restart (sessions invalidate).
+
+**Still set manually for real production:**
 
 | Variable | Example / notes |
 |----------|-----------------|
-| `JWT_SECRET` | ≥32 random chars, not a placeholder |
+| `JWT_SECRET` | ≥32 random chars, not a placeholder (do not rely on auto-gen) |
 | `MOMO_WEBHOOK_SECRET` | long random shared secret |
 | `CORS_ORIGIN` | your public HTTPS origin(s), comma-separated |
 | `SHOP_PUBLIC_ORIGIN` | public shop URL (QR / tunnel), no trailing slash |
+| `DATABASE_URL` | `postgresql://…` for multi-tenant / paid shops |
 
-**Volume:** mount path `/data` (required for durable SQLite + uploads).
+**Volume:** mount path `/data` (required for durable SQLite, uploads, and auto-secrets).
+
+**Healthcheck:** `GET /api/health` (no auth) — matches `railway.toml` / `railway.json`
+`healthcheckPath`.
 
 ## Rollback
 

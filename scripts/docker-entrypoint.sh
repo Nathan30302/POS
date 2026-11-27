@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
-# Persist SQLite + uploads on host volume at /data (Fly [[mounts]] / Railway Volume).
+# Persist SQLite + uploads + auto-secrets on host volume at /data
+# (Fly [[mounts]] / Railway Volume). Always mkdir so boot works even without a volume.
 mkdir -p /data /data/uploads
 if [ ! -e /app/uploads ] || [ -L /app/uploads ]; then
   rm -rf /app/uploads 2>/dev/null || true
@@ -13,7 +14,9 @@ if [ -z "${DATABASE_URL:-}" ]; then
 fi
 export SERVE_SPA="${SERVE_SPA:-1}"
 export NODE_ENV="${NODE_ENV:-production}"
-# Railway injects PORT; default 4000 for local/Fly. Server binds 0.0.0.0.
+# Railway injects PORT; default 4000 for local/Fly. Server binds 0.0.0.0:$PORT.
+# JWT_SECRET / MOMO_WEBHOOK_SECRET / CORS_ORIGIN are auto-provisioned in server/env.ts
+# when unset so the process can listen without a pre-configured dashboard.
 
 cd /app
 npx prisma db push --skip-generate
