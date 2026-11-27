@@ -1,33 +1,35 @@
 NEXORA public demo URL
 ======================
 
-Status as of last agent check: TEMPORARY tunnel only (NOT laptop-off safe).
+Durable (laptop-off) URL: NO — not deployed
+  Blocked: Fly/Railway/Render not logged in on this Mac.
+  Account needed: run `fly auth login` (or Railway/Render sign-in), then `fly deploy`.
+  In-repo ready: Dockerfile, fly.toml, railway.json, scripts/docker-entrypoint.sh
 
-Current temporary HTTPS (Mac must stay awake; cloudflared must stay running):
-  https://salem-hello-nonprofit-colon.trycloudflare.com
-  PDF: https://salem-hello-nonprofit-colon.trycloudflare.com/docs/NEXORA-for-business.pdf
+Temporary working HTTPS (Mac must stay on + cloudflared running):
+  https://hardwood-explained-looked-contest.trycloudflare.com
+  PDF: https://hardwood-explained-looked-contest.trycloudflare.com/docs/NEXORA-for-business.pdf
 
+Verified while tunnel up: /api/health, /, /login → 200
+Laptop-off safe: NO
 
-Durable (laptop-off) URL:
-  NOT DEPLOYED YET — blocked: no Fly/Railway/Render CLI login on this machine.
-
-Demo PDF (same host as the app, once the URL is up):
-  {PUBLIC_ORIGIN}/docs/NEXORA-for-business.pdf
-
-Demo logins (seed):
+Demo logins:
   owner@demo.shop / DemoOwner1!
-  admin@demo.shop / DemoAdmin1!
   cashier@demo.shop / DemoCash1!
-  Platform: admin@nexora.app / NexoraAdmin1!
 
---- Always-on deploy (required for laptop-off) ---
+Always-on steps in fly.toml + below:
 
-Option A — Fly.io (preferred; configs are in-repo)
-  1. Install:  curl -L https://fly.io/install.sh | sh
-  2. Login:    fly auth login
-  3. Create:   fly apps create nexora-shop-demo
-  4. Volume:   fly volumes create nexora_data --region jnb --size 1
-  5. Secrets:
+--- Always-on deploy (mandatory for laptop-off) ---
+
+Option A — Fly.io (configs in-repo: Dockerfile, fly.toml, scripts/docker-entrypoint.sh)
+  1. Install a working CLI:
+       curl -L https://fly.io/install.sh | sh
+       # or: brew install flyctl
+  2. Login (opens browser):
+       fly auth login
+  3. From /Users/mac/POS:
+       fly apps create nexora-shop-demo
+       fly volumes create nexora_data --region jnb --size 1
        fly secrets set \
          JWT_SECRET="$(openssl rand -hex 32)" \
          MOMO_WEBHOOK_SECRET="$(openssl rand -hex 24)" \
@@ -35,19 +37,18 @@ Option A — Fly.io (preferred; configs are in-repo)
          SHOP_PUBLIC_ORIGIN="https://nexora-shop-demo.fly.dev" \
          DATABASE_URL="file:/data/nexora.db" \
          SEED_ON_BOOT=1
-  6. Deploy:   fly deploy
-  7. URL:      https://nexora-shop-demo.fly.dev
-     (update CORS_ORIGIN / SHOP_PUBLIC_ORIGIN if the app name differs)
+       fly deploy
+  4. Expected URL: https://nexora-shop-demo.fly.dev
+     Update CORS/SHOP_PUBLIC_ORIGIN if the hostname differs.
+  5. Verify:
+       curl -sS https://nexora-shop-demo.fly.dev/api/health
+       curl -sS -o /dev/null -w "%{http_code}\n" https://nexora-shop-demo.fly.dev/login
 
-Option B — Railway
-  1. railway login && railway init (or connect the GitHub/Origin repo in the dashboard)
-  2. Required: Service → Settings → Volumes → Add Volume → Mount path: /data
-     (Dockerfile must NOT declare VOLUME — Railway rejects that instruction.
-      App writes SQLite to DATABASE_URL=file:/data/nexora.db and uploads to /data/uploads.)
-  3. Variables (same as Fly secrets above; use your Railway public URL for CORS /
-     SHOP_PUBLIC_ORIGIN). Railway sets PORT automatically; SERVE_SPA=1 is in the image.
-  4. Deploy from the linked repo (Dockerfile + railway.json). Entrypoint runs
-     prisma db push + optional seed, then serves API+SPA on 0.0.0.0:$PORT.
+Option B — Railway (railway.json + same Dockerfile)
+  1. railway login
+  2. Attach a Volume mounted at /data
+  3. Set the same env vars with your Railway public URL for CORS / SHOP_PUBLIC_ORIGIN
+  4. Deploy
 
 Honest constraint:
-  A tunnel to localhost CANNOT survive laptop-off. Cloud hosting is mandatory.
+  A tunnel to localhost CANNOT survive laptop-off. Cloud hosting + account login is required.
