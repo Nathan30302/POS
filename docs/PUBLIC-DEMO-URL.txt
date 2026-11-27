@@ -1,0 +1,48 @@
+NEXORA public demo URL
+======================
+
+Status as of last agent check: TEMPORARY tunnel only (NOT laptop-off safe).
+
+Current temporary HTTPS (Mac must stay awake; cloudflared must stay running):
+  https://salem-hello-nonprofit-colon.trycloudflare.com
+  PDF: https://salem-hello-nonprofit-colon.trycloudflare.com/docs/NEXORA-for-business.pdf
+
+
+Durable (laptop-off) URL:
+  NOT DEPLOYED YET — blocked: no Fly/Railway/Render CLI login on this machine.
+
+Demo PDF (same host as the app, once the URL is up):
+  {PUBLIC_ORIGIN}/docs/NEXORA-for-business.pdf
+
+Demo logins (seed):
+  owner@demo.shop / DemoOwner1!
+  admin@demo.shop / DemoAdmin1!
+  cashier@demo.shop / DemoCash1!
+  Platform: admin@nexora.app / NexoraAdmin1!
+
+--- Always-on deploy (required for laptop-off) ---
+
+Option A — Fly.io (preferred; configs are in-repo)
+  1. Install:  curl -L https://fly.io/install.sh | sh
+  2. Login:    fly auth login
+  3. Create:   fly apps create nexora-shop-demo
+  4. Volume:   fly volumes create nexora_data --region jnb --size 1
+  5. Secrets:
+       fly secrets set \
+         JWT_SECRET="$(openssl rand -hex 32)" \
+         MOMO_WEBHOOK_SECRET="$(openssl rand -hex 24)" \
+         CORS_ORIGIN="https://nexora-shop-demo.fly.dev" \
+         SHOP_PUBLIC_ORIGIN="https://nexora-shop-demo.fly.dev" \
+         DATABASE_URL="file:/data/nexora.db" \
+         SEED_ON_BOOT=1
+  6. Deploy:   fly deploy
+  7. URL:      https://nexora-shop-demo.fly.dev
+     (update CORS_ORIGIN / SHOP_PUBLIC_ORIGIN if the app name differs)
+
+Option B — Railway
+  railway login && railway init && railway up
+  Set the same env vars; attach a volume at /data if using SQLite.
+  Config: railway.json + Dockerfile
+
+Honest constraint:
+  A tunnel to localhost CANNOT survive laptop-off. Cloud hosting is mandatory.
